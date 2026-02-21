@@ -8,7 +8,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
-import 'screens/dashboard_screen.dart';
+import 'widgets/main_app_shell.dart';
 import 'services/notification_service.dart';
 import 'services/sound_classification_service.dart';
 import 'utils/app_logger.dart';
@@ -152,8 +152,8 @@ class MyApp extends StatelessWidget {
                       // Not logged in - show splash/onboarding/login flow
                       return const SplashScreen();
                     } else {
-                      // Already logged in - go directly to Dashboard
-                      return const DashboardScreen();
+                      // Already logged in - go to main app shell with navigation
+                      return const MainAppShell();
                     }
                   }
                   // Loading state

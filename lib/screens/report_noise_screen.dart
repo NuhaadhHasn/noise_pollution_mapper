@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'dart:math' as math;
-import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
@@ -356,7 +355,6 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _buildBottomNavBar(),
     );
   }
 
@@ -406,71 +404,6 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
               overflow: TextOverflow.ellipsis,
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  // Bottom Navigation Bar
-  Widget _buildBottomNavBar() {
-    final isDark = ThemeHelper.isDark(context);
-    return SafeArea(
-      top: false,
-      bottom: true,
-      child: Container(
-        height: 70,
-        decoration: BoxDecoration(
-          color: isDark ? AppTheme.darkPurple : ThemeHelper.getPrimaryColor(context),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha:0.2),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildNavButton(Icons.map_outlined, () => Navigator.pop(context)),
-          _buildNavButton(Icons.bar_chart, () => Navigator.pop(context)),
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: ThemeHelper.getPrimaryColor(context),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: ThemeHelper.getPrimaryColor(context).withValues(alpha:0.3),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-              child: Icon(Icons.home, color: Colors.white, size: 28),
-            ),
-          ),
-          _buildNavButton(Icons.add_circle_outline, () {}, isActive: true),
-          _buildNavButton(Icons.settings_outlined, () => Navigator.pop(context)),
-        ],
-      ),
-      ),
-    );
-  }
-
-  Widget _buildNavButton(IconData icon, VoidCallback onTap, {bool isActive = false}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        child: Icon(
-          icon,
-          color: isActive ? ThemeHelper.getPrimaryColor(context) : AppTheme.textGray,
-          size: 28,
         ),
       ),
     );
