@@ -78,13 +78,14 @@ class _SearchListScreenState extends State<SearchListScreen> {
       appBar: AppBar(
         title: Text('Search Cities'),
         leading: IconButton(
-          icon: Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
         actions: [
-          // Sort menu
+          // Sort menu - white icon to match AppBar
           PopupMenuButton<String>(
-            icon: Icon(Icons.sort),
+            icon: const Icon(Icons.sort, color: AppTheme.textWhite),
             onSelected: (value) {
               setState(() {
                 _sortBy = value;
@@ -261,7 +262,6 @@ class _SearchListScreenState extends State<SearchListScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: _buildBottomNavBar(),
     );
   }
 
@@ -614,70 +614,6 @@ class _SearchListScreenState extends State<SearchListScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  // Bottom Navigation Bar
-  Widget _buildBottomNavBar() {
-    return SafeArea(
-      top: false,
-      bottom: true,
-      child: Container(
-        height: 70,
-        decoration: BoxDecoration(
-        color: AppTheme.darkPurple,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha:0.2),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildNavButton(Icons.map_outlined, () => Navigator.pop(context)),
-          _buildNavButton(Icons.bar_chart, () => Navigator.pop(context)),
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: ThemeHelper.getPrimaryColor(context),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: ThemeHelper.getPrimaryColor(context).withValues(alpha:0.3),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-              child: Icon(Icons.home, color: Colors.white, size: 28),
-            ),
-          ),
-          _buildNavButton(Icons.search, () {}, isActive: true),
-          _buildNavButton(Icons.settings_outlined, () => Navigator.pop(context)),
-        ],
-      ),
-      ),
-    );
-  }
-
-  Widget _buildNavButton(IconData icon, VoidCallback onTap, {bool isActive = false}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        child: Icon(
-          icon,
-          color: isActive ? ThemeHelper.getPrimaryColor(context) : ThemeHelper.getSecondaryTextColor(context),
-          size: 28,
-        ),
-      ),
     );
   }
 }

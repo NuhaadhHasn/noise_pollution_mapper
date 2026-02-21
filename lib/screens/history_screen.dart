@@ -159,11 +159,13 @@ class HistoryScreen extends StatelessWidget {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('History', style: TextStyle(fontSize: 20)),
-            Text('Your Recordings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: ThemeHelper.getTextColor(context))),
+            Text('History', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            Text('Your Recordings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
           ],
         ),
         automaticallyImplyLeading: false,
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
+        actionsIconTheme: const IconThemeData(color: AppTheme.textWhite),
         leading: isInAppShell
             ? null
             : IconButton(
@@ -171,7 +173,7 @@ class HistoryScreen extends StatelessWidget {
                 onPressed: () => Navigator.pop(context),
               ),
         actions: [
-          // Export button
+          // Export button - same color as History title
           IconButton(
             icon: Icon(Icons.download),
             onPressed: () => _exportDataToCSV(context),

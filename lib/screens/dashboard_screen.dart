@@ -481,9 +481,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
         title: const Text('Dashboard'),
-        automaticallyImplyLeading: false, // No back button after login/signup
+        automaticallyImplyLeading: false,
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
+        actionsIconTheme: const IconThemeData(color: AppTheme.textWhite),
         actions: [
-          // Logout button
+          // Logout button - same color as Dashboard title
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
@@ -506,7 +508,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
             tooltip: 'Logout',
           ),
-          // Settings icon
+          // Settings icon - same color as Dashboard title
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {

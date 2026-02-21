@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'dart:math' as math;
+import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
@@ -134,9 +135,10 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
       appBar: AppBar(
         title: Text('Report Noise'),
         leading: IconButton(
-          icon: Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),

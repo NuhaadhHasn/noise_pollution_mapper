@@ -245,12 +245,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Analytics', style: TextStyle(fontSize: 20)),
+            Text('Analytics', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             Text('Noise Stats',
                 style: TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: ThemeHelper.getTextColor(context))),
+                    fontWeight: FontWeight.w600)),
           ],
         ),
         automaticallyImplyLeading: false,

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../theme/app_theme.dart';
-import '../widgets/shared_bottom_navbar.dart';
+import '../utils/theme_helper.dart';
 
 class CommunityFeedScreen extends StatefulWidget {
   const CommunityFeedScreen({super.key});
@@ -50,15 +50,14 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme
-          .of(context)
-          .scaffoldBackgroundColor,
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
         title: const Text('Community Feed'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: _firestore
@@ -194,22 +193,6 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           );
         },
       ),
-      bottomNavigationBar: _buildBottomNavBar(),
-    );
-  }
-
-  // Bottom Navigation Bar - Navigate to MainAppShell tabs
-  Widget _buildBottomNavBar() {
-    return SharedBottomNavBar(
-      currentIndex: -1, // No tab selected (this is a standalone screen)
-      onTap: (index) {
-        // Pop this screen and let MainAppShell handle the navigation
-        Navigator.pop(context);
-        // Small delay to ensure pop completes before tab change
-        Future.delayed(const Duration(milliseconds: 100), () {
-          // Navigation is handled by MainAppShell after pop
-        });
-      },
     );
   }
 
