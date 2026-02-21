@@ -1,0 +1,683 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:geocoding/geocoding.dart';
+import '../theme/app_theme.dart';
+import '../utils/theme_helper.dart';
+import '../services/firebase_service.dart';
+import '../utils/app_logger.dart';
+import 'map_view_screen.dart';
+import 'package:latlong2/latlong.dart';
+
+class SearchListScreen extends StatefulWidget {
+  const SearchListScreen({super.key});
+
+  @override
+  State<SearchListScreen> createState() => _SearchListScreenState();
+}
+
+class _SearchListScreenState extends State<SearchListScreen> {
+  final FirebaseService _firebaseService = FirebaseService();
+  final TextEditingController _searchController = TextEditingController();
+
+  String _searchQuery = '';
+  String _sortBy = 'noise'; // 'noise' or 'name'
+
+  // Geocoding search results
+  List<Location> _geocodingResults = [];
+  bool _isSearchingGeocode = false;
+  String? _geocodeError;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // Search for any city worldwide using geocoding
+  Future<void> _searchCityGlobally(String cityName) async {
+    if (cityName.trim().isEmpty || cityName.trim().length < 3) {
+      setState(() {
+        _geocodingResults = [];
+        _geocodeError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearchingGeocode = true;
+      _geocodeError = null;
+    });
+
+    try {
+      AppLogger.info('Searching globally for: $cityName');
+      final locations = await locationFromAddress(cityName);
+
+      if (mounted) {
+        setState(() {
+          _geocodingResults = locations;
+          _isSearchingGeocode = false;
+        });
+        AppLogger.info('Found ${locations.length} location(s) for: $cityName');
+      }
+    } catch (e) {
+      AppLogger.error('Geocoding search failed', e);
+      if (mounted) {
+        setState(() {
+          _geocodingResults = [];
+          _isSearchingGeocode = false;
+          _geocodeError = 'No locations found for "$cityName"';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
+      appBar: AppBar(
+        title: Text('Search Cities'),
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          // Sort menu
+          PopupMenuButton<String>(
+            icon: Icon(Icons.sort),
+            onSelected: (value) {
+              setState(() {
+                _sortBy = value;
+              });
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'noise',
+                child: Text('Sort by Noise Level'),
+              ),
+              const PopupMenuItem(
+                value: 'name',
+                child: Text('Sort by Name'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: TextField(
+              controller: _searchController,
+              style: TextStyle(color: ThemeHelper.getTextColor(context)),
+              decoration: InputDecoration(
+                hintText: 'Enter cities...',
+                hintStyle: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
+                prefixIcon: Icon(Icons.search, color: ThemeHelper.getSecondaryTextColor(context)),
+                filled: true,
+                fillColor: ThemeHelper.getCardColor(context),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value.toLowerCase();
+                });
+                // Trigger global search after user stops typing (debounce)
+                Future.delayed(const Duration(milliseconds: 500), () {
+                  if (value == _searchQuery) {
+                    _searchCityGlobally(value);
+                  }
+                });
+              },
+              onSubmitted: (value) {
+                // Immediate search on submit
+                _searchCityGlobally(value);
+              },
+            ),
+          ),
+
+          // Global Search Results Section (shows when user searches)
+          if (_searchQuery.isNotEmpty && _searchQuery.length >= 3)
+            _buildGlobalSearchSection(),
+
+          // Section Header
+          if (_searchQuery.isNotEmpty && _searchQuery.length >= 3)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Cities with Recordings',
+                style: TextStyle(
+                  color: ThemeHelper.getTextColor(context),
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+
+          // City grid (recorded cities)
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: _firebaseService.getNoiseReadings(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(
+                    child: CircularProgressIndicator(color: ThemeHelper.getPrimaryColor(context)),
+                  );
+                }
+
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return Center(
+                    child: Text(
+                      'No data available',
+                      style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
+                    ),
+                  );
+                }
+
+                // Group readings by city and calculate averages
+                final cityData = _processCityData(snapshot.data!.docs);
+
+                // Filter by search query (improved partial matching)
+                final filteredCities = cityData.entries.where((entry) {
+                  final cityName = entry.key.toLowerCase();
+                  final query = _searchQuery.toLowerCase();
+                  // Match if city name contains query or query contains city name
+                  return cityName.contains(query) || query.contains(cityName);
+                }).toList();
+
+                // Show helpful message if no cities found
+                if (filteredCities.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _searchQuery.isEmpty ? Icons.location_off : Icons.search_off,
+                          size: 64,
+                          color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.5),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _searchQuery.isEmpty
+                              ? 'No cities with valid data'
+                              : 'No cities match "$_searchQuery"',
+                          style: TextStyle(
+                            color: ThemeHelper.getTextColor(context),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _searchQuery.isEmpty
+                              ? 'Start recording in different locations\nto build city data'
+                              : 'Try a different search term',
+                          style: TextStyle(
+                            color: ThemeHelper.getSecondaryTextColor(context),
+                            fontSize: 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                // Sort
+                if (_sortBy == 'noise') {
+                  filteredCities.sort((a, b) => b.value['avgDb'].compareTo(a.value['avgDb']));
+                } else {
+                  filteredCities.sort((a, b) => a.key.compareTo(b.key));
+                }
+
+                return GridView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    childAspectRatio: 1.2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                  ),
+                  itemCount: filteredCities.length,
+                  itemBuilder: (context, index) {
+                    final cityName = filteredCities[index].key;
+                    final data = filteredCities[index].value;
+
+                    return _buildCityCard(
+                      cityName,
+                      data['avgDb'],
+                      data['count'],
+                      data['maxDb'],
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: _buildBottomNavBar(),
+    );
+  }
+
+  // Build global search results section
+  Widget _buildGlobalSearchSection() {
+    if (_isSearchingGeocode) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: ThemeHelper.getPrimaryColor(context),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Searching worldwide...',
+              style: TextStyle(
+                color: ThemeHelper.getSecondaryTextColor(context),
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_geocodeError != null) {
+      return Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.orange, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                _geocodeError!,
+                style: TextStyle(color: Colors.orange[300], fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_geocodingResults.isNotEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Search Results (Tap to view on map)',
+              style: TextStyle(
+                color: ThemeHelper.getTextColor(context),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...List.generate(_geocodingResults.length, (index) {
+              final location = _geocodingResults[index];
+              return _buildGlobalSearchResultCard(location, index);
+            }),
+            const SizedBox(height: 8),
+            Divider(color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3)),
+          ],
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  // Build individual global search result card
+  Widget _buildGlobalSearchResultCard(Location location, int index) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      color: ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.1),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.3),
+        ),
+      ),
+      child: ListTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.2),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            Icons.location_on,
+            color: ThemeHelper.getPrimaryColor(context),
+            size: 24,
+          ),
+        ),
+        title: Text(
+          _searchQuery.trim(),
+          style: TextStyle(
+            color: ThemeHelper.getTextColor(context),
+            fontWeight: FontWeight.w600,
+            fontSize: 16,
+          ),
+        ),
+        subtitle: Text(
+          'Lat: ${location.latitude.toStringAsFixed(4)}, Lng: ${location.longitude.toStringAsFixed(4)}',
+          style: TextStyle(
+            color: ThemeHelper.getSecondaryTextColor(context),
+            fontSize: 12,
+          ),
+        ),
+        trailing: Icon(
+          Icons.arrow_forward_ios,
+          color: ThemeHelper.getPrimaryColor(context),
+          size: 16,
+        ),
+        onTap: () {
+          // Navigate to map at this location
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => MapViewScreen(
+                initialLocation: LatLng(location.latitude, location.longitude),
+                searchedLocationName: _searchQuery.trim(),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // Process city data - group by location and calculate averages
+  // Improved with filtering and normalization
+  Map<String, Map<String, dynamic>> _processCityData(List<QueryDocumentSnapshot> docs) {
+    final Map<String, List<double>> cityReadings = {};
+
+    for (var doc in docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      var city = data['locationName'] as String? ?? '';
+
+      // Skip invalid location names
+      if (city.isEmpty ||
+          city.toLowerCase() == 'unknown' ||
+          city.toLowerCase() == 'unknown location' ||
+          city.toLowerCase().startsWith('fetching') ||
+          city.toLowerCase().contains('permission denied')) {
+        continue;
+      }
+
+      // Normalize city name
+      city = _normalizeCityName(city);
+
+      final db = (data['decibelLevel'] as num).toDouble();
+
+      // Validate decibel reading
+      if (db.isFinite && db >= 0 && db <= 120) {
+        cityReadings.putIfAbsent(city, () => []);
+        cityReadings[city]!.add(db);
+      }
+    }
+
+    // Calculate averages and filter out cities with too few readings
+    final Map<String, Map<String, dynamic>> result = {};
+
+    cityReadings.forEach((city, readings) {
+      // Only include cities with at least 2 readings to avoid outliers
+      if (readings.length >= 2) {
+        final avg = readings.reduce((a, b) => a + b) / readings.length;
+        final max = readings.reduce((a, b) => a > b ? a : b);
+
+        result[city] = {
+          'avgDb': avg,
+          'maxDb': max,
+          'count': readings.length,
+        };
+      }
+    });
+
+    return result;
+  }
+
+  // Normalize city name for better grouping
+  String _normalizeCityName(String city) {
+    // Trim whitespace
+    city = city.trim();
+
+    // Handle coordinate-based names (e.g., "6.9271, 79.8612")
+    if (city.contains(',') && city.split(',').length == 2) {
+      try {
+        final parts = city.split(',');
+        final lat = double.tryParse(parts[0].trim());
+        final lng = double.tryParse(parts[1].trim());
+        if (lat != null && lng != null) {
+          // Keep coordinates but format consistently
+          return '${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)}';
+        }
+      } catch (e) {
+        // Not coordinates, continue with normal processing
+      }
+    }
+
+    // Capitalize first letter of each word for consistency
+    return city.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ');
+  }
+
+  // City card widget
+  Widget _buildCityCard(String cityName, double avgDb, int count, double maxDb) {
+    Color cardColor;
+    IconData icon;
+
+    if (avgDb < 50) {
+      cardColor = AppTheme.lowNoise;
+      icon = Icons.volume_down;
+    } else if (avgDb < 70) {
+      cardColor = AppTheme.moderateNoise;
+      icon = Icons.volume_up;
+    } else {
+      cardColor = AppTheme.highNoise;
+      icon = Icons.warning;
+    }
+
+    return GestureDetector(
+      onTap: () => _showCityDetails(cityName, avgDb, count, maxDb),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: ThemeHelper.getCardColor(context),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: cardColor.withValues(alpha:0.5),
+            width: 2,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: cardColor, size: 32),
+            const SizedBox(height: 8),
+            Text(
+              cityName,
+              style: TextStyle(
+                color: ThemeHelper.getTextColor(context),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${avgDb.toStringAsFixed(0)} dB',
+              style: TextStyle(
+                color: cardColor,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              '$count readings',
+              style: TextStyle(
+                color: ThemeHelper.getSecondaryTextColor(context),
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Show city details dialog
+  void _showCityDetails(String city, double avgDb, int count, double maxDb) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ThemeHelper.getCardColor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.location_on, color: ThemeHelper.getPrimaryColor(context)),
+                  const SizedBox(width: 8),
+                  Text(
+                    city,
+                    style: TextStyle(
+                      color: ThemeHelper.getTextColor(context),
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildStatItem('Average', '${avgDb.toStringAsFixed(0)} dB'),
+                  _buildStatItem('Max Level', '${maxDb.toStringAsFixed(0)} dB'),
+                  _buildStatItem('Readings', '$count'),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildStatItem(String label, String value) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: ThemeHelper.getPrimaryColor(context),
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            color: ThemeHelper.getSecondaryTextColor(context),
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Bottom Navigation Bar
+  Widget _buildBottomNavBar() {
+    return SafeArea(
+      top: false,
+      bottom: true,
+      child: Container(
+        height: 70,
+        decoration: BoxDecoration(
+        color: AppTheme.darkPurple,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha:0.2),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildNavButton(Icons.map_outlined, () => Navigator.pop(context)),
+          _buildNavButton(Icons.bar_chart, () => Navigator.pop(context)),
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: ThemeHelper.getPrimaryColor(context),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: ThemeHelper.getPrimaryColor(context).withValues(alpha:0.3),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Icon(Icons.home, color: Colors.white, size: 28),
+            ),
+          ),
+          _buildNavButton(Icons.search, () {}, isActive: true),
+          _buildNavButton(Icons.settings_outlined, () => Navigator.pop(context)),
+        ],
+      ),
+      ),
+    );
+  }
+
+  Widget _buildNavButton(IconData icon, VoidCallback onTap, {bool isActive = false}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        child: Icon(
+          icon,
+          color: isActive ? ThemeHelper.getPrimaryColor(context) : ThemeHelper.getSecondaryTextColor(context),
+          size: 28,
+        ),
+      ),
+    );
+  }
+}

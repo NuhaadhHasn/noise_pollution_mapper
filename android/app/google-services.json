@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "185708456928",
+    "project_id": "noise-pollution-mapper-9ad3d",
+    "storage_bucket": "noise-pollution-mapper-9ad3d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:185708456928:android:84881c81b95eafd4191985",
+        "android_client_info": {
+          "package_name": "com.noisemapper.noise_pollution_mapper"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB-gBktWS-mebPrFK0M9Bxt_7Y7A2ALezI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

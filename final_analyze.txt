@@ -1,0 +1,30 @@
+Analyzing noise_pollution_mapper...                             
+
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\analytics_screen.dart:479:72 - deprecated_member_use
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\screens\dashboard_screen.dart:423:30 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\dashboard_screen.dart:534:109 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\dashboard_screen.dart:800:60 - deprecated_member_use
+  error - Methods can't be invoked in constant expressions - lib\screens\edit_profile_screen.dart:286:36 - const_eval_method_invocation
+  error - Methods can't be invoked in constant expressions - lib\screens\edit_profile_screen.dart:337:36 - const_eval_method_invocation
+  error - Methods can't be invoked in constant expressions - lib\screens\edit_profile_screen.dart:405:33 - const_eval_method_invocation
+  error - Methods can't be invoked in constant expressions - lib\screens\edit_profile_screen.dart:435:36 - const_eval_method_invocation
+warning - Unused import: '../theme/app_theme.dart' - lib\screens\login_screen.dart:3:8 - unused_import
+warning - Unused import: '../theme/app_theme.dart' - lib\screens\registration_screen.dart:4:8 - unused_import
+  error - Methods can't be invoked in constant expressions - lib\screens\registration_screen.dart:218:61 - const_eval_method_invocation
+  error - Methods can't be invoked in constant expressions - lib\screens\registration_screen.dart:259:61 - const_eval_method_invocation
+  error - Methods can't be invoked in constant expressions - lib\screens\registration_screen.dart:311:61 - const_eval_method_invocation
+  error - Methods can't be invoked in constant expressions - lib\screens\registration_screen.dart:363:61 - const_eval_method_invocation
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\settings_screen_enhanced.dart:365:90 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\settings_screen_enhanced.dart:395:82 - deprecated_member_use
+   info - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre - lib\screens\settings_screen_enhanced.dart:426:13 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\settings_screen_enhanced.dart:469:56 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use component accessors like .r or .g, or toARGB32 for an explicit conversion - lib\screens\settings_screen_enhanced.dart:544:49 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use component accessors like .r or .g, or toARGB32 for an explicit conversion - lib\screens\settings_screen_enhanced.dart:544:64 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use component accessors like .r or .g, or toARGB32 for an explicit conversion - lib\screens\settings_screen_enhanced.dart:553:49 - deprecated_member_use
+warning - The value of the local variable 'isDark' isn't used - lib\screens\settings_screen_enhanced.dart:616:11 - unused_local_variable
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\settings_screen_enhanced.dart:1075:60 - deprecated_member_use
+   info - 'printTime' is deprecated and shouldn't be used. Use `dateTimeFormat` with `DateTimeFormat.onlyTimeAndSinceStart` or `DateTimeFormat.none` instead - lib\utils\app_logger.dart:20:7 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\utils\theme_helper.dart:43:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\utils\theme_helper.dart:44:34 - deprecated_member_use
+
+26 issues found. (ran in 15.5s)
