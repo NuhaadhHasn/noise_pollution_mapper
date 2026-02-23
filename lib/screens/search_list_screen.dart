@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:geocoding/geocoding.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
 import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
@@ -22,10 +23,10 @@ class _SearchListScreenState extends State<SearchListScreen> {
   String _searchQuery = '';
   String _sortBy = 'noise'; // 'noise' or 'name'
 
-  // Geocoding search results
-  List<Location> _geocodingResults = [];
-  bool _isSearchingGeocode = false;
-  String? _geocodeError;
+  // Nominatim API search results
+  List<Map<String, dynamic>> _nominatimResults = [];
+  bool _isSearching = false;
+  String? _searchError;
 
   @override
   void dispose() {
@@ -33,39 +34,65 @@ class _SearchListScreenState extends State<SearchListScreen> {
     super.dispose();
   }
 
-  // Search for any city worldwide using geocoding
-  Future<void> _searchCityGlobally(String cityName) async {
-    if (cityName.trim().isEmpty || cityName.trim().length < 3) {
+  // Search using Nominatim API (OpenStreetMap)
+  Future<void> _searchWithNominatim(String query) async {
+    if (query.trim().isEmpty || query.trim().length < 2) {
       setState(() {
-        _geocodingResults = [];
-        _geocodeError = null;
+        _nominatimResults = [];
+        _searchError = null;
       });
       return;
     }
 
     setState(() {
-      _isSearchingGeocode = true;
-      _geocodeError = null;
+      _isSearching = true;
+      _searchError = null;
     });
 
     try {
-      AppLogger.info('Searching globally for: $cityName');
-      final locations = await locationFromAddress(cityName);
+      AppLogger.info('Nominatim search for: $query');
+      
+      // Use Nominatim API with 50 results limit
+      // Bias towards Sri Lanka but include worldwide results
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/search?format=json&q=$query&limit=50&addressdetails=1',
+      );
 
-      if (mounted) {
-        setState(() {
-          _geocodingResults = locations;
-          _isSearchingGeocode = false;
-        });
-        AppLogger.info('Found ${locations.length} location(s) for: $cityName');
+      final response = await http.get(
+        url,
+        headers: {'User-Agent': 'NoiseMapper/1.0'},
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+
+        if (mounted) {
+          setState(() {
+            _nominatimResults = data
+                .map(
+                  (item) => {
+                    'name': item['display_name'] ?? 'Unknown',
+                    'lat': double.parse(item['lat']),
+                    'lon': double.parse(item['lon']),
+                    'type': item['type'] ?? 'place',
+                    'importance': item['importance'] ?? 0.5,
+                  },
+                )
+                .toList();
+            _isSearching = false;
+          });
+          AppLogger.info('Found ${_nominatimResults.length} results for: $query');
+        }
+      } else {
+        throw Exception('API returned status ${response.statusCode}');
       }
     } catch (e) {
-      AppLogger.error('Geocoding search failed', e);
+      AppLogger.error('Nominatim search failed', e);
       if (mounted) {
         setState(() {
-          _geocodingResults = [];
-          _isSearchingGeocode = false;
-          _geocodeError = 'No locations found for "$cityName"';
+          _nominatimResults = [];
+          _isSearching = false;
+          _searchError = 'Search failed. Please try again.';
         });
       }
     }
@@ -127,16 +154,16 @@ class _SearchListScreenState extends State<SearchListScreen> {
                 setState(() {
                   _searchQuery = value.toLowerCase();
                 });
-                // Trigger global search after user stops typing (debounce)
+                // Trigger search after user stops typing (debounce)
                 Future.delayed(const Duration(milliseconds: 500), () {
                   if (value == _searchQuery) {
-                    _searchCityGlobally(value);
+                    _searchWithNominatim(value);
                   }
                 });
               },
               onSubmitted: (value) {
                 // Immediate search on submit
-                _searchCityGlobally(value);
+                _searchWithNominatim(value);
               },
             ),
           ),
@@ -267,7 +294,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
 
   // Build global search results section
   Widget _buildGlobalSearchSection() {
-    if (_isSearchingGeocode) {
+    if (_isSearching) {
       return Container(
         padding: const EdgeInsets.all(24),
         child: Row(
@@ -294,7 +321,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
       );
     }
 
-    if (_geocodeError != null) {
+    if (_searchError != null) {
       return Container(
         margin: const EdgeInsets.all(16),
         padding: const EdgeInsets.all(16),
@@ -309,7 +336,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                _geocodeError!,
+                _searchError!,
                 style: TextStyle(color: Colors.orange[300], fontSize: 14),
               ),
             ),
@@ -318,7 +345,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
       );
     }
 
-    if (_geocodingResults.isNotEmpty) {
+    if (_nominatimResults.isNotEmpty) {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Column(
@@ -333,9 +360,9 @@ class _SearchListScreenState extends State<SearchListScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            ...List.generate(_geocodingResults.length, (index) {
-              final location = _geocodingResults[index];
-              return _buildGlobalSearchResultCard(location, index);
+            ...List.generate(_nominatimResults.length, (index) {
+              final result = _nominatimResults[index];
+              return _buildGlobalSearchResultCard(result, index);
             }),
             const SizedBox(height: 8),
             Divider(color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3)),
@@ -348,7 +375,24 @@ class _SearchListScreenState extends State<SearchListScreen> {
   }
 
   // Build individual global search result card
-  Widget _buildGlobalSearchResultCard(Location location, int index) {
+  Widget _buildGlobalSearchResultCard(Map<String, dynamic> result, int index) {
+    final name = result['name'] as String;
+    final lat = result['lat'] as double;
+    final lon = result['lon'] as double;
+    final type = result['type'] as String;
+    
+    // Get icon based on place type
+    IconData typeIcon = Icons.location_on;
+    if (type == 'city' || type == 'town' || type == 'village') {
+      typeIcon = Icons.location_city;
+    } else if (type == 'road' || type == 'street') {
+      typeIcon = Icons.route;
+    } else if (type == 'park' || type == 'forest') {
+      typeIcon = Icons.park;
+    } else if (type == 'water' || type == 'river' || type == 'lake') {
+      typeIcon = Icons.water;
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       color: ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.1),
@@ -367,24 +411,26 @@ class _SearchListScreenState extends State<SearchListScreen> {
             shape: BoxShape.circle,
           ),
           child: Icon(
-            Icons.location_on,
+            typeIcon,
             color: ThemeHelper.getPrimaryColor(context),
             size: 24,
           ),
         ),
         title: Text(
-          _searchQuery.trim(),
+          name.split(',').take(2).join(', '), // Show first 2 parts of name
           style: TextStyle(
             color: ThemeHelper.getTextColor(context),
             fontWeight: FontWeight.w600,
-            fontSize: 16,
+            fontSize: 14,
           ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          'Lat: ${location.latitude.toStringAsFixed(4)}, Lng: ${location.longitude.toStringAsFixed(4)}',
+          '${lat.toStringAsFixed(3)}, ${lon.toStringAsFixed(3)}',
           style: TextStyle(
             color: ThemeHelper.getSecondaryTextColor(context),
-            fontSize: 12,
+            fontSize: 11,
           ),
         ),
         trailing: Icon(
@@ -398,8 +444,8 @@ class _SearchListScreenState extends State<SearchListScreen> {
             context,
             MaterialPageRoute(
               builder: (context) => MapViewScreen(
-                initialLocation: LatLng(location.latitude, location.longitude),
-                searchedLocationName: _searchQuery.trim(),
+                initialLocation: LatLng(lat, lon),
+                searchedLocationName: name.split(',').first, // Show first part of name
               ),
             ),
           );
