@@ -54,13 +54,22 @@ class FirebaseService {
     }
   }
 
-  // Get all noise readings (for map view)
+  // Get all noise readings (for map view) - STREAM VERSION (continuous listening)
   Stream<QuerySnapshot> getNoiseReadings() {
     return _firestore
         .collection('noise_readings')
         .orderBy('timestamp', descending: true)
         .limit(100) // Last 100 readings
         .snapshots();
+  }
+
+  // Get all noise readings ONCE (for map view) - FIXED: No continuous listening
+  Future<QuerySnapshot> getNoiseReadingsOnce() async {
+    return await _firestore
+        .collection('noise_readings')
+        .orderBy('timestamp', descending: true)
+        .limit(100) // Last 100 readings
+        .get();
   }
 
   // Get user's readings (for analytics)
@@ -88,6 +97,7 @@ class FirebaseService {
   }
 
   // Get user's readings for a specific time period (for time-period analytics)
+  // Uses isGreaterThan to match the existing composite index (userId ASC, timestamp DESC).
   Stream<QuerySnapshot> getUserReadingsByPeriod(String userId, DateTime since) {
     return _firestore
         .collection('noise_readings')
@@ -98,6 +108,7 @@ class FirebaseService {
   }
 
   // Calculate statistics for a specific time period
+  // orderBy must match the existing composite index (userId ASC, timestamp DESC).
   Future<Map<String, double>> calculateStatsByPeriod(DateTime since) async {
     final user = _auth.currentUser;
     if (user == null) return {};
@@ -106,6 +117,7 @@ class FirebaseService {
         .collection('noise_readings')
         .where('userId', isEqualTo: user.uid)
         .where('timestamp', isGreaterThan: Timestamp.fromDate(since))
+        .orderBy('timestamp', descending: true)
         .get();
 
     if (snapshot.docs.isEmpty) {

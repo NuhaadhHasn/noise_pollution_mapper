@@ -7,9 +7,9 @@
 
 ---
 
-## 📊 PROJECT STATUS: 🎉 PRODUCTION READY! ALL ENHANCEMENTS COMPLETE! 🎉
+## 📊 PROJECT STATUS: 🎉 PRODUCTION READY! ANALYTICS FULLY POLISHED! 🎉
 
-**Last Updated:** 2026-02-20 (Session 24 - Analytics Time-Period Filtering COMPLETE!)
+**Last Updated:** 2026-02-23 (Session 25 - Analytics Deep Bug Fixes COMPLETE!)
 
 ### ✅ What's Done:
 - All 12 screens implemented
@@ -52,6 +52,21 @@
   - ✅ Fixed BuildContext async gap (captured navigator before async)
   - ✅ Verified 0 print() statements remain (all use AppLogger)
   - ✅ Code is now 100% production-ready!
+- ✅ **SESSION 25 - ANALYTICS DEEP BUG FIXES COMPLETE**
+  - ✅ Fixed duplicate x-axis labels (Mon,Mon,Tue,Tue) — added interval:1 to SideTitles
+  - ✅ Fixed Daily label logic — bucket-position-based (% 6) not clock-time-based
+  - ✅ Fixed Monthly label logic — bucket-position-based (% 7), DateFormat('MMM d') format
+  - ✅ Fixed chip row overflow — Row → Wrap for both period and sound filter chips
+  - ✅ Fixed userId checked after async call (race condition) — moved to first line
+  - ✅ Fixed StreamBuilder stream re-created on every setState — cached in _trendStream
+  - ✅ Fixed maxY: 100 hard-coded — now dynamic: (dataMax + 15).clamp(60, 140)
+  - ✅ Fixed missing ConnectionState.waiting check — shows spinner instead of "No data" flash
+  - ✅ Fixed race condition on rapid period taps — capturedPeriod guard added
+  - ✅ Fixed Firestore index error — reverted isGreaterThanOrEqualTo → isGreaterThan
+  - ✅ Fixed calculateStatsByPeriod missing orderBy — added orderBy(timestamp, DESC)
+  - ✅ Fixed _trendStream only set on success — now set before queries (chart resilient)
+  - ✅ Monthly labels: "25/1" → "Jan 25" using DateFormat('MMM d') from intl package
+  - ✅ flutter analyze: No issues found!
 - ✅ **SESSION 24 - ANALYTICS TIME-PERIOD FILTERING COMPLETE**
   - ✅ Added Daily | Weekly | Monthly filter chips to Analytics screen
   - ✅ All analytics data (stats, pie chart, categories, confidence) reflects selected period
@@ -90,8 +105,9 @@
 3. ✅ **Theme system overhaul** - COMPLETE! ✅
 4. ✅ **Production Polish (Session 21)** - COMPLETE! ✅
 5. ✅ **Analytics time-period filtering (Session 24)** - COMPLETE! ✅
-6. **Final testing** - Test on device to verify all fixes work correctly
-7. **Documentation** - Write user manual, technical docs (2-3 hours)
+6. ✅ **Analytics deep bug fixes (Session 25)** - COMPLETE! ✅
+7. **Final testing** - Test on device to verify all fixes work correctly
+8. **Documentation** - Write user manual, technical docs (2-3 hours)
 
 **Status:** Code 100% production-ready! Ready for final device testing and documentation.
 
@@ -589,6 +605,22 @@ lib/
 ---
 
 ## 🎓 SESSION HISTORY
+
+**Session 25 (2026-02-23) - COMPLETED:**
+- ✅ Analytics screen: Thorough bug-fix pass — all chart, state, and Firestore issues resolved
+- ✅ Chart x-axis: Fixed duplicate labels (interval:1), fixed Daily/Monthly label logic
+- ✅ Chart: maxY now dynamic — (dataMax + 15).clamp(60, 140) — no more clipping at 100 dB
+- ✅ StreamBuilder: Added ConnectionState.waiting spinner (no more "No data" flash)
+- ✅ State: Cached _trendStream — sound filter changes no longer recreate Firestore stream
+- ✅ State: Race condition guard on rapid period changes (capturedPeriod check)
+- ✅ State: userId null-check moved before any async calls
+- ✅ State: _trendStream set before stats queries — chart always visible even if stats fail
+- ✅ Firestore: Reverted isGreaterThanOrEqualTo → isGreaterThan (existing index compatibility)
+- ✅ Firestore: Added orderBy(timestamp DESC) to calculateStatsByPeriod() (uses existing index)
+- ✅ UI: Monthly x-axis labels: "25/1" → "Jan 25" using DateFormat('MMM d') from intl
+- ✅ UI: Chip rows changed from Row → Wrap (no overflow on narrow screens)
+- ✅ flutter analyze: No issues found!
+- Next: Final device testing → Documentation phase
 
 **Session 24 (2026-02-20) - COMPLETED:**
 - ✅ Analytics screen: Added Daily | Weekly | Monthly time-period filter chips
