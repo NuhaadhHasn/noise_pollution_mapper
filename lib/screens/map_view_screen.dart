@@ -82,6 +82,17 @@ class _MapViewScreenState extends State<MapViewScreen> {
     super.dispose();
   }
 
+  // Public method to navigate to a location (called from MainAppShell)
+  void navigateToLocation(LatLng location, String locationName) {
+    AppLogger.info('Navigating to location: $locationName');
+    setState(() {
+      _currentLocation = location;
+      _searchedLocation = location;
+    });
+    _mapController.move(location, 13.0);
+    _mapSearchController.text = locationName;
+  }
+
   // FIXED: Load noise markers once (not continuous stream)
   Future<void> _loadNoiseMarkers() async {
     if (_isLoadingMarkers) return; // Prevent duplicate loads
@@ -668,14 +679,25 @@ class _MapViewScreenState extends State<MapViewScreen> {
                                 ),
                               ),
                               GestureDetector(
-                                onTap: () {
-                                  Navigator.push(
+                                onTap: () async {
+                                  final result = await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (context) =>
                                           const SearchListScreen(),
                                     ),
                                   );
+                                  
+                                  // If location was selected, navigate to it
+                                  if (result != null && result is Map<String, dynamic>) {
+                                    final lat = result['lat'] as double;
+                                    final lon = result['lon'] as double;
+                                    final name = result['name'] as String;
+                                    navigateToLocation(
+                                      LatLng(lat, lon),
+                                      name,
+                                    );
+                                  }
                                 },
                                 child: Icon(
                                   Icons.history,
@@ -759,6 +781,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
               bottom: 50,
               right: 16,
               child: FloatingActionButton(
+                heroTag: 'map_location_btn',
                 backgroundColor: ThemeHelper.getPrimaryColor(context),
                 onPressed: () {
                   _mapController.move(_currentLocation, 13.0);

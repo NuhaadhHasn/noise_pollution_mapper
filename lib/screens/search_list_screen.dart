@@ -6,8 +6,6 @@ import '../theme/app_theme.dart';
 import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
 import '../utils/app_logger.dart';
-import 'map_view_screen.dart';
-import 'package:latlong2/latlong.dart';
 
 class SearchListScreen extends StatefulWidget {
   const SearchListScreen({super.key});
@@ -133,7 +131,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
       ),
       body: Column(
         children: [
-          // Search bar
+          // Search bar (fixed height)
           Padding(
             padding: const EdgeInsets.all(16),
             child: TextField(
@@ -168,25 +166,30 @@ class _SearchListScreenState extends State<SearchListScreen> {
             ),
           ),
 
-          // Global Search Results Section (shows when user searches)
+          // Global Search Results Section (scrollable, constrained height)
           if (_searchQuery.isNotEmpty && _searchQuery.length >= 3)
-            _buildGlobalSearchSection(),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.4, // Max 40% of screen
+              ),
+              child: _buildGlobalSearchSection(),
+            ),
 
-          // Section Header
+          // Section Header (fixed height)
           if (_searchQuery.isNotEmpty && _searchQuery.length >= 3)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Text(
                 'Cities with Recordings',
                 style: TextStyle(
                   color: ThemeHelper.getTextColor(context),
-                  fontSize: 18,
+                  fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
 
-          // City grid (recorded cities)
+          // City grid (takes remaining space)
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: _firebaseService.getNoiseReadings(),
@@ -355,17 +358,22 @@ class _SearchListScreenState extends State<SearchListScreen> {
               'Search Results (Tap to view on map)',
               style: TextStyle(
                 color: ThemeHelper.getTextColor(context),
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 12),
-            ...List.generate(_nominatimResults.length, (index) {
-              final result = _nominatimResults[index];
-              return _buildGlobalSearchResultCard(result, index);
-            }),
             const SizedBox(height: 8),
-            Divider(color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3)),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                physics: const ClampingScrollPhysics(),
+                itemCount: _nominatimResults.length,
+                itemBuilder: (context, index) {
+                  final result = _nominatimResults[index];
+                  return _buildGlobalSearchResultCard(result, index);
+                },
+              ),
+            ),
           ],
         ),
       );
@@ -439,16 +447,12 @@ class _SearchListScreenState extends State<SearchListScreen> {
           size: 16,
         ),
         onTap: () {
-          // Navigate to map at this location
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => MapViewScreen(
-                initialLocation: LatLng(lat, lon),
-                searchedLocationName: name.split(',').first, // Show first part of name
-              ),
-            ),
-          );
+          // Return the selected location to the Map screen
+          Navigator.pop(context, {
+            'lat': lat,
+            'lon': lon,
+            'name': name.split(',').first,
+          });
         },
       ),
     );
