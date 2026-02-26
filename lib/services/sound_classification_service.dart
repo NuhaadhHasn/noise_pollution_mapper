@@ -27,10 +27,10 @@ class SoundClassificationService {
   static const int numClasses = 521; // YAMNet outputs 521 classes
 
   /// Confidence threshold for classification
-  /// Lowered to 45% for better real-world detection
+  /// Lowered to 30% for better real-world detection
   /// Music and environmental sounds often have lower confidence scores
   /// Can be adjusted based on testing results
-  static const double confidenceThreshold = 0.45;
+  static const double confidenceThreshold = 0.30;
 
   /// Classification frequency - every 5 seconds (matches Firebase save frequency)
   static const int classificationIntervalSeconds = 5;

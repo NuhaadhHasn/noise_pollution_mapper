@@ -15,7 +15,6 @@
 library;
 
 class YAMNetClassMapping {
-
   /// Sound pollution categories
   static const String categoryTraffic = "Traffic";
   static const String categoryTuktuk = "Tuk-tuk";
@@ -27,6 +26,10 @@ class YAMNetClassMapping {
   static const String categoryMarket = "Market";
   static const String categoryNature = "Nature";
   static const String categoryOther = "Other";
+  static const String categoryDomestic = "Domestic";
+  static const String categoryAlarm = "Alarm";
+  static const String categoryBodySounds = "Body Sounds";
+  static const String categoryTransport = "Transport";
 
   /// Pollution type classification
   static const String typePollution = "Pollution";
@@ -36,8 +39,7 @@ class YAMNetClassMapping {
   /// Maps class indices (0-520) to AudioSet class names
   /// Source: YAMNet AudioSet ontology
   static final Map<int, String> indexToClassName = {
-    // Speech and human sounds
-    0: 'Speech',
+    // Speech and human sounds0: 'Speech',
     1: 'Male speech, man speaking',
     2: 'Female speech, woman speaking',
     3: 'Child speech, kid speaking',
@@ -460,12 +462,33 @@ class YAMNetClassMapping {
     'Whispering': categorySpeech,
     'Laughter': categorySpeech,
     'Chuckle, chortle': categorySpeech,
+    'Belly laugh': categorySpeech,
+    'Giggle': categorySpeech,
+    'Snicker': categorySpeech,
     'Crowd': categorySpeech,
     'Hubbub, speech noise, speech babble': categorySpeech,
     'Children playing': categorySpeech,
     'Battle cry': categorySpeech,
     'Cheering': categorySpeech,
     'Applause': categorySpeech,
+    // Human body sounds
+    'Breathing': categoryBodySounds,
+    'Gasp': categoryBodySounds,
+    'Cough': categoryBodySounds,
+    'Throat clearing': categoryBodySounds,
+    'Sneeze': categoryBodySounds,
+    'Sniff': categoryBodySounds,
+    'Clapping': categoryBodySounds,
+    'Finger snapping': categoryBodySounds,
+    'Hands': categoryBodySounds,
+    'Heart sounds, heartbeat': categoryBodySounds,
+    'Chewing, mastication': categoryBodySounds,
+    'Biting': categoryBodySounds,
+    'Gargling': categoryBodySounds,
+    'Stomach rumble': categoryBodySounds,
+    'Burping, eructation': categoryBodySounds,
+    'Hiccup': categoryBodySounds,
+    'Fart': categoryBodySounds,
 
     // Music
     'Music': categoryMusic,
@@ -474,24 +497,92 @@ class YAMNetClassMapping {
     'Guitar': categoryMusic,
     'Bass guitar': categoryMusic,
     'Acoustic guitar': categoryMusic,
+    'Electric guitar': categoryMusic,
     'Steel guitar, slide guitar': categoryMusic,
     'Tapping (guitar technique)': categoryMusic,
     'Strum': categoryMusic,
     'Banjo': categoryMusic,
     'Sitar': categoryMusic,
     'Mandolin': categoryMusic,
+    'Ukulele': categoryMusic,
+    'String instrument': categoryMusic,
+    'Violin, fiddle': categoryMusic,
+    'Cello': categoryMusic,
+    'Double bass': categoryMusic,
+    'Harp': categoryMusic,
     'Keyboard (musical)': categoryMusic,
     'Piano': categoryMusic,
     'Electric piano': categoryMusic,
     'Organ': categoryMusic,
     'Synthesizer': categoryMusic,
+    'Accordion': categoryMusic,
+    'Harmonica': categoryMusic,
+    'Wind instrument, woodwind instrument': categoryMusic,
+    'Saxophone': categoryMusic,
+    'Clarinet': categoryMusic,
+    'Brass instrument': categoryMusic,
+    'Trumpet': categoryMusic,
+    'Trombone': categoryMusic,
+    'French horn': categoryMusic,
+    'Tuba': categoryMusic,
     'Drum': categoryMusic,
     'Drum kit': categoryMusic,
+    'Bass drum': categoryMusic,
+    'Snare drum': categoryMusic,
+    'Rimshot': categoryMusic,
+    'Cymbal': categoryMusic,
+    'Hi-hat': categoryMusic,
+    'Percussion': categoryMusic,
+    'Tambourine': categoryMusic,
+    'Marimba, xylophone': categoryMusic,
+    'Rattle (instrument)': categoryMusic,
     'Singing': categoryMusic,
     'Song': categoryMusic,
     'Jingle, tinkle': categoryMusic,
     'Tabla': categoryMusic,
     'Flute': categoryMusic,
+    // Music genres
+    'Music genre': categoryMusic,
+    'Rock music': categoryMusic,
+    'Heavy metal': categoryMusic,
+    'Punk rock': categoryMusic,
+    'Grunge': categoryMusic,
+    'Progressive rock': categoryMusic,
+    'Rock and roll': categoryMusic,
+    'Psychedelic rock': categoryMusic,
+    'Rhythm and blues': categoryMusic,
+    'Soul music': categoryMusic,
+    'Funk': categoryMusic,
+    'Disco': categoryMusic,
+    'Pop music': categoryMusic,
+    'Hip hop music': categoryMusic,
+    'Rapping': categoryMusic,
+    'Electronic music': categoryMusic,
+    'House music': categoryMusic,
+    'Techno': categoryMusic,
+    'Dubstep': categoryMusic,
+    'Drum and bass': categoryMusic,
+    'Electronic dance music': categoryMusic,
+    'Trance music': categoryMusic,
+    'Music of Latin America': categoryMusic,
+    'Salsa music': categoryMusic,
+    'Reggae': categoryMusic,
+    'Country music': categoryMusic,
+    'Jazz': categoryMusic,
+    'Swing music': categoryMusic,
+    'Bluegrass': categoryMusic,
+    'Classical music': categoryMusic,
+    'Opera': categoryMusic,
+    'Choir': categoryMusic,
+    'Traditional music': categoryMusic,
+    'Middle Eastern music': categoryMusic,
+    'Carnatic music': categoryMusic,
+    'Music of Bollywood': categoryMusic,
+    // Vocals and other music
+    'Vocal music': categoryMusic,
+    'Jingle (music)': categoryMusic,
+    'Humming': categoryMusic,
+    'Yodeling': categoryMusic,
 
     // Religious sounds
     'Bell': categoryReligious,
@@ -505,60 +596,60 @@ class YAMNetClassMapping {
     'Mantra': categoryReligious,
 
     // Market / Street vendors (human activity sounds)
-    'Busy signal': categoryMarket,
     // 'Crowd': categoryMarket, // Duplicate key - already mapped to SPEECH
     // 'Hubbub, speech noise, speech babble': categoryMarket, // Duplicate key - already mapped to SPEECH
-    'Squeak': categoryMarket,
-    'Walk, footsteps': categoryMarket,
-    'Run': categoryMarket,
-    'Shuffling cards': categoryMarket,
+    'Busy signal': categoryDomestic,
+    'Squeak': categoryDomestic,
+    'Walk, footsteps': categoryBodySounds,
+    'Run': categoryBodySounds,
+    'Shuffling cards': categoryDomestic,
 
-    // Domestic/Household sounds (Other/Ambient)
-    'Domestic sounds, home sounds': categoryOther,
-    'Door': categoryOther,
-    'Doorbell': categoryOther,
-    'Knock': categoryOther,
-    'Slam': categoryOther,
-    'Dishes, pots, and pans': categoryOther,
-    'Cutlery, silverware': categoryOther,
-    'Chopping (food)': categoryOther,
-    'Frying (food)': categoryOther,
-    'Microwave oven': categoryOther,
-    'Blender': categoryOther,
-    'Water tap, faucet': categoryOther,
-    'Sink (filling or washing)': categoryOther,
-    'Bathtub (filling or washing)': categoryOther,
-    'Hair dryer': categoryOther,
-    'Toilet flush': categoryOther,
-    'Electric toothbrush': categoryOther,
-    'Vacuum cleaner': categoryOther,
-    'Zipper (clothing)': categoryOther,
-    'Keys jangling': categoryOther,
-    'Coin (dropping)': categoryOther,
-    'Scissors': categoryOther,
-    'Electric shaver, electric razor': categoryOther,
-    'Typing': categoryOther,
-    'Typewriter': categoryOther,
-    'Computer keyboard': categoryOther,
-    'Writing': categoryOther,
-    'Clock': categoryOther,
-    'Tick': categoryOther,
-    'Tick-tock': categoryOther,
-    'Alarm clock': categoryOther,
-    'Clock alarm': categoryOther,
-    'Telephone': categoryOther,
-    'Telephone bell ringing': categoryOther,
-    'Ringtone': categoryOther,
-    'Telephone dialing, DTMF': categoryOther,
-    'Dial tone': categoryOther,
+    // Domestic/Household sounds
+    'Domestic sounds, home sounds': categoryDomestic,
+    'Door': categoryDomestic,
+    'Doorbell': categoryDomestic,
+    'Knock': categoryDomestic,
+    'Slam': categoryDomestic,
+    'Dishes, pots, and pans': categoryDomestic,
+    'Cutlery, silverware': categoryDomestic,
+    'Chopping (food)': categoryDomestic,
+    'Frying (food)': categoryDomestic,
+    'Microwave oven': categoryDomestic,
+    'Blender': categoryDomestic,
+    'Water tap, faucet': categoryDomestic,
+    'Sink (filling or washing)': categoryDomestic,
+    'Bathtub (filling or washing)': categoryDomestic,
+    'Hair dryer': categoryDomestic,
+    'Toilet flush': categoryDomestic,
+    'Electric toothbrush': categoryDomestic,
+    'Vacuum cleaner': categoryDomestic,
+    'Zipper (clothing)': categoryDomestic,
+    'Keys jangling': categoryDomestic,
+    'Coin (dropping)': categoryDomestic,
+    'Scissors': categoryDomestic,
+    'Electric shaver, electric razor': categoryDomestic,
+    'Typing': categoryDomestic,
+    'Typewriter': categoryDomestic,
+    'Computer keyboard': categoryDomestic,
+    'Writing': categoryDomestic,
+    'Clock': categoryDomestic,
+    'Tick': categoryDomestic,
+    'Tick-tock': categoryDomestic,
+    'Alarm clock': categoryAlarm,
+    'Clock alarm': categoryAlarm,
+    'Telephone': categoryDomestic,
+    'Telephone bell ringing': categoryDomestic,
+    'Ringtone': categoryDomestic,
+    'Telephone dialing, DTMF': categoryDomestic,
+    'Dial tone': categoryDomestic,
 
     // Emergency/Alert sounds (Traffic category for visibility)
     'Siren': categoryTraffic,
-    'Civil defense siren': categoryTraffic,
-    'Buzzer': categoryOther,
-    'Smoke detector, smoke alarm': categoryOther,
-    'Fire alarm': categoryOther,
-    'Foghorn': categoryOther,
+    'Civil defense siren': categoryAlarm,
+    'Buzzer': categoryAlarm,
+    'Smoke detector, smoke alarm': categoryAlarm,
+    'Fire alarm': categoryAlarm,
+    'Foghorn': categoryTransport,
     'Whistle': categoryOther,
     'Steam whistle': categoryOther,
     'Emergency vehicle': categoryTraffic,
@@ -569,18 +660,18 @@ class YAMNetClassMapping {
     'Reversing beeps': categoryTraffic,
 
     // More transportation
-    'Train': categoryTraffic,
-    'Train whistle': categoryTraffic,
-    'Train horn': categoryTraffic,
-    'Railroad car, train wagon': categoryTraffic,
-    'Train wheels squealing': categoryTraffic,
-    'Subway, metro, underground': categoryTraffic,
-    'Aircraft': categoryTraffic,
-    'Aircraft engine': categoryTraffic,
-    'Jet engine': categoryTraffic,
-    'Propeller, airscrew': categoryTraffic,
-    'Helicopter': categoryTraffic,
-    'Fixed-wing aircraft, airplane': categoryTraffic,
+    'Train': categoryTransport,
+    'Train whistle': categoryTransport,
+    'Train horn': categoryTransport,
+    'Railroad car, train wagon': categoryTransport,
+    'Train wheels squealing': categoryTransport,
+    'Subway, metro, underground': categoryTransport,
+    'Aircraft': categoryTransport,
+    'Aircraft engine': categoryTransport,
+    'Jet engine': categoryTransport,
+    'Propeller, airscrew': categoryTransport,
+    'Helicopter': categoryTransport,
+    'Fixed-wing aircraft, airplane': categoryTransport,
     'Bicycle': categoryOther,
     'Bicycle bell': categoryOther,
     'Skateboard': categoryOther,
@@ -668,8 +759,7 @@ class YAMNetClassMapping {
     'Pink noise': categoryOther,
     'Static': categoryOther,
     'Hiss': categoryOther,
-    'Crackle': categoryOther,
-    'Ambient music': categoryOther,
+    'Ambient music': categoryMusic,
   };
 
   /// Determine if a sound category is considered pollution or ambient
@@ -681,12 +771,18 @@ class YAMNetClassMapping {
       case categoryIndustrial:
         return typePollution;
 
+      case categoryTransport:
+      case categoryAlarm:
+        return typePollution;
+
       case categorySpeech:
       case categoryMusic:
       case categoryReligious:
       case categoryMarket:
       case categoryNature:
       case categoryOther:
+      case categoryDomestic:
+      case categoryBodySounds:
         return typeAmbient;
 
       default:
@@ -737,91 +833,310 @@ class YAMNetClassMapping {
   static String _categorizeByKeywords(String className, int? classIndex) {
     final lower = className.toLowerCase();
 
+    // Range-based fallback for gap indices where the class name is still
+    // "YAMNet_Class_N" (no indexToClassName entry). Uses AudioSet ontology
+    // structure to assign a reasonable category without guessing exact names.
+    if (classIndex != null && className.startsWith('YAMNet_Class_')) {
+      if (classIndex >= 137 && classIndex <= 228) return categoryMusic;
+      if (classIndex >= 0 && classIndex <= 15) return categorySpeech;
+      if (classIndex >= 16 && classIndex <= 35) return categoryBodySounds;
+      if (classIndex >= 36 && classIndex <= 108) return categoryNature;
+      if (classIndex >= 229 && classIndex <= 309) return categoryDomestic;
+      if (classIndex >= 310 && classIndex <= 387) return categoryTraffic;
+      if (classIndex >= 388 && classIndex <= 393) return categoryConstruction;
+      if (classIndex >= 394 && classIndex <= 399) return categoryIndustrial;
+      // Indices 109-136 and 400-520: fall through to keyword checks below
+    }
+
+    // Transport keywords (train, aircraft — checked before general Traffic)
+    if (lower.contains('train') ||
+        lower.contains('railway') ||
+        lower.contains('railroad') ||
+        lower.contains('subway') ||
+        lower.contains('metro') ||
+        lower.contains('aircraft') ||
+        lower.contains('airplane') ||
+        lower.contains('helicopter') ||
+        lower.contains('jet') ||
+        lower.contains('propeller') ||
+        lower.contains('boat') ||
+        lower.contains('ship') ||
+        lower.contains('vessel') ||
+        lower.contains('ferry') ||
+        lower.contains('foghorn')) {
+      return categoryTransport;
+    }
+
     // Traffic/Vehicle keywords
-    if (lower.contains('vehicle') || lower.contains('car') || lower.contains('truck') ||
-        lower.contains('bus') || lower.contains('traffic') || lower.contains('engine') ||
-        lower.contains('motor') || lower.contains('horn') || lower.contains('brake') ||
-        lower.contains('tire') || lower.contains('accelerat')) {
+    if (lower.contains('vehicle') ||
+        lower.contains('car') ||
+        lower.contains('truck') ||
+        lower.contains('bus') ||
+        lower.contains('traffic') ||
+        lower.contains('engine') ||
+        lower.contains('motor') ||
+        lower.contains('horn') ||
+        lower.contains('brake') ||
+        lower.contains('tire') ||
+        lower.contains('accelerat')) {
       return categoryTraffic;
     }
 
     // Motorcycle/Scooter keywords (Tuk-tuk)
-    if (lower.contains('motorcycle') || lower.contains('scooter') ||
-        lower.contains('moped') || lower.contains('bike')) {
+    if (lower.contains('motorcycle') ||
+        lower.contains('scooter') ||
+        lower.contains('moped') ||
+        lower.contains('bike')) {
       return categoryTuktuk;
     }
 
     // Music keywords
-    if (lower.contains('music') || lower.contains('instrument') || lower.contains('piano') ||
-        lower.contains('guitar') || lower.contains('drum') || lower.contains('sing') ||
-        lower.contains('vocal') || lower.contains('melody') || lower.contains('song') ||
-        lower.contains('orchestra') || lower.contains('band') || lower.contains('rhythm') ||
-        lower.contains('beat') || lower.contains('bass') || lower.contains('treble') ||
-        lower.contains('harmony') || lower.contains('trumpet') || lower.contains('violin') ||
-        lower.contains('saxophone') || lower.contains('flute') || lower.contains('organ') ||
-        lower.contains('keyboard') || lower.contains('synthesizer') || lower.contains('harp') ||
-        lower.contains('cello') || lower.contains('tuba') || lower.contains('clarinet') ||
-        lower.contains('rock') || lower.contains('pop') || lower.contains('jazz') ||
-        lower.contains('classical') || lower.contains('hip hop') || lower.contains('electronic') ||
-        lower.contains('techno') || lower.contains('disco') || lower.contains('reggae') ||
-        lower.contains('country') || lower.contains('opera') || lower.contains('choir')) {
+    if (lower.contains('music') ||
+        lower.contains('instrument') ||
+        lower.contains('piano') ||
+        lower.contains('guitar') ||
+        lower.contains('drum') ||
+        lower.contains('sing') ||
+        lower.contains('vocal') ||
+        lower.contains('melody') ||
+        lower.contains('song') ||
+        lower.contains('orchestra') ||
+        lower.contains('band') ||
+        lower.contains('rhythm') ||
+        lower.contains('beat') ||
+        lower.contains('bass') ||
+        lower.contains('treble') ||
+        lower.contains('harmony') ||
+        lower.contains('trumpet') ||
+        lower.contains('violin') ||
+        lower.contains('saxophone') ||
+        lower.contains('flute') ||
+        lower.contains('organ') ||
+        lower.contains('keyboard') ||
+        lower.contains('synthesizer') ||
+        lower.contains('harp') ||
+        lower.contains('cello') ||
+        lower.contains('tuba') ||
+        lower.contains('clarinet') ||
+        lower.contains('rock') ||
+        lower.contains('pop') ||
+        lower.contains('jazz') ||
+        lower.contains('classical') ||
+        lower.contains('hip hop') ||
+        lower.contains('electronic') ||
+        lower.contains('techno') ||
+        lower.contains('disco') ||
+        lower.contains('reggae') ||
+        lower.contains('country') ||
+        lower.contains('opera') ||
+        lower.contains('choir') ||
+        lower.contains('tambourine') ||
+        lower.contains('marimba') ||
+        lower.contains('xylophone') ||
+        lower.contains('percussion') ||
+        lower.contains('accordion') ||
+        lower.contains('harmonica') ||
+        lower.contains('trombone') ||
+        lower.contains('rapping') ||
+        lower.contains('humming') ||
+        lower.contains('yodel') ||
+        lower.contains('bluegrass') ||
+        lower.contains('dubstep') ||
+        lower.contains('trance') ||
+        lower.contains('salsa') ||
+        lower.contains('carnatic') ||
+        lower.contains('ukulele') ||
+        lower.contains('mandolin') ||
+        lower.contains('banjo') ||
+        lower.contains('sitar') ||
+        lower.contains('tabla') ||
+        lower.contains('lullaby')) {
       return categoryMusic;
     }
 
+    // Body sounds keywords (checked before general Speech)
+    if (lower.contains('cough') ||
+        lower.contains('sneeze') ||
+        lower.contains('breathing') ||
+        lower.contains('breath') ||
+        lower.contains('heartbeat') ||
+        lower.contains('sniff') ||
+        lower.contains('gasp') ||
+        lower.contains('throat') ||
+        lower.contains('clap') ||
+        lower.contains('snapping') ||
+        lower.contains('footstep') ||
+        lower.contains('chewing') ||
+        lower.contains('chew') ||
+        lower.contains('burping') ||
+        lower.contains('burp') ||
+        lower.contains('hiccup') ||
+        lower.contains('gargling') ||
+        lower.contains('stomach')) {
+      return categoryBodySounds;
+    }
+
     // Speech keywords
-    if (lower.contains('speech') || lower.contains('speak') || lower.contains('talk') ||
-        lower.contains('voice') || lower.contains('conversation') || lower.contains('narrat') ||
-        lower.contains('male') || lower.contains('female') || lower.contains('child') ||
-        lower.contains('laugh') || lower.contains('shout') || lower.contains('yell') ||
-        lower.contains('whisper') || lower.contains('crowd') || lower.contains('cheer') ||
-        lower.contains('applause') || lower.contains('human')) {
+    if (lower.contains('speech') ||
+        lower.contains('speak') ||
+        lower.contains('talk') ||
+        lower.contains('voice') ||
+        lower.contains('conversation') ||
+        lower.contains('narrat') ||
+        lower.contains('male') ||
+        lower.contains('female') ||
+        lower.contains('child') ||
+        lower.contains('laugh') ||
+        lower.contains('shout') ||
+        lower.contains('yell') ||
+        lower.contains('whisper') ||
+        lower.contains('crowd') ||
+        lower.contains('cheer') ||
+        lower.contains('applause') ||
+        lower.contains('human') ||
+        lower.contains('giggle') ||
+        lower.contains('snicker')) {
       return categorySpeech;
     }
 
+    // Alarm keywords
+    if (lower.contains('alarm') ||
+        lower.contains('smoke detector') ||
+        lower.contains('fire alarm') ||
+        lower.contains('buzzer') ||
+        lower.contains('notification') ||
+        lower.contains('alert') ||
+        lower.contains('warning signal')) {
+      return categoryAlarm;
+    }
+
     // Construction keywords
-    if (lower.contains('jackhammer') || lower.contains('drill') || lower.contains('saw') ||
-        lower.contains('hammer') || lower.contains('construction') || lower.contains('demolit') ||
-        lower.contains('breaking') || lower.contains('crushing') || lower.contains('boom') ||
-        lower.contains('bang')) {
+    if (lower.contains('jackhammer') ||
+        lower.contains('drill') ||
+        lower.contains('saw') ||
+        lower.contains('hammer') ||
+        lower.contains('construction') ||
+        lower.contains('demolit') ||
+        lower.contains('breaking') ||
+        lower.contains('crushing') ||
+        lower.contains('boom') ||
+        lower.contains('bang') ||
+        lower.contains('explosion') ||
+        lower.contains('blast') ||
+        lower.contains('firework')) {
       return categoryConstruction;
     }
 
     // Industrial keywords
-    if (lower.contains('machine') || lower.contains('machinery') || lower.contains('industrial') ||
-        lower.contains('factory') || lower.contains('pump') || lower.contains('fan') ||
-        lower.contains('air conditioning') || lower.contains('hum') || lower.contains('buzz') ||
-        lower.contains('chainsaw') || lower.contains('mower')) {
+    if (lower.contains('machine') ||
+        lower.contains('machinery') ||
+        lower.contains('industrial') ||
+        lower.contains('factory') ||
+        lower.contains('pump') ||
+        lower.contains('fan') ||
+        lower.contains('air conditioning') ||
+        lower.contains('hum') ||
+        lower.contains('buzz') ||
+        lower.contains('chainsaw') ||
+        lower.contains('mower') ||
+        lower.contains('compressor') ||
+        lower.contains('grinder') ||
+        lower.contains('boiler') ||
+        lower.contains('diesel') ||
+        lower.contains('dishwasher') ||
+        lower.contains('washing machine')) {
       return categoryIndustrial;
     }
 
+    // Domestic / Household keywords
+    if (lower.contains('door') ||
+        lower.contains('appliance') ||
+        lower.contains('kitchen') ||
+        lower.contains('household') ||
+        lower.contains('domestic') ||
+        lower.contains('fridge') ||
+        lower.contains('refrigerator') ||
+        lower.contains('microwave') ||
+        lower.contains('blender') ||
+        lower.contains('vacuum') ||
+        lower.contains('toilet') ||
+        lower.contains('faucet') ||
+        lower.contains('telephone') ||
+        lower.contains('ringtone') ||
+        lower.contains('typing') ||
+        lower.contains('keyboard') ||
+        lower.contains('clock') ||
+        lower.contains('dishwasher') ||
+        lower.contains('washing machine') ||
+        lower.contains('oven') ||
+        lower.contains('toaster')) {
+      return categoryDomestic;
+    }
+
     // Religious keywords
-    if (lower.contains('bell') || lower.contains('church') || lower.contains('chime') ||
-        lower.contains('gong') || lower.contains('prayer') || lower.contains('chant') ||
-        lower.contains('hymn') || lower.contains('religious')) {
+    if (lower.contains('bell') ||
+        lower.contains('church') ||
+        lower.contains('chime') ||
+        lower.contains('gong') ||
+        lower.contains('prayer') ||
+        lower.contains('chant') ||
+        lower.contains('hymn') ||
+        lower.contains('religious')) {
       return categoryReligious;
     }
 
     // Nature keywords
-    if (lower.contains('bird') || lower.contains('animal') || lower.contains('dog') ||
-        lower.contains('cat') || lower.contains('wind') || lower.contains('rain') ||
-        lower.contains('thunder') || lower.contains('water') || lower.contains('nature') ||
-        lower.contains('chirp') || lower.contains('bark') || lower.contains('meow') ||
-        lower.contains('pet') || lower.contains('livestock') || lower.contains('horse') ||
-        lower.contains('cattle') || lower.contains('cow') || lower.contains('pig') ||
-        lower.contains('goat') || lower.contains('sheep') || lower.contains('chicken') ||
-        lower.contains('rooster') || lower.contains('duck') || lower.contains('goose') ||
-        lower.contains('pigeon') || lower.contains('crow') || lower.contains('owl') ||
-        lower.contains('insect') || lower.contains('cricket') || lower.contains('mosquito') ||
-        lower.contains('bee') || lower.contains('wasp') || lower.contains('frog') ||
-        lower.contains('snake') || lower.contains('whale') || lower.contains('ocean') ||
-        lower.contains('stream') || lower.contains('waterfall') || lower.contains('wave') ||
-        lower.contains('fire') || lower.contains('leaves') || lower.contains('environmental')) {
+    if (lower.contains('bird') ||
+        lower.contains('animal') ||
+        lower.contains('dog') ||
+        lower.contains('cat') ||
+        lower.contains('wind') ||
+        lower.contains('rain') ||
+        lower.contains('thunder') ||
+        lower.contains('water') ||
+        lower.contains('nature') ||
+        lower.contains('chirp') ||
+        lower.contains('bark') ||
+        lower.contains('meow') ||
+        lower.contains('pet') ||
+        lower.contains('livestock') ||
+        lower.contains('horse') ||
+        lower.contains('cattle') ||
+        lower.contains('cow') ||
+        lower.contains('pig') ||
+        lower.contains('goat') ||
+        lower.contains('sheep') ||
+        lower.contains('chicken') ||
+        lower.contains('rooster') ||
+        lower.contains('duck') ||
+        lower.contains('goose') ||
+        lower.contains('pigeon') ||
+        lower.contains('crow') ||
+        lower.contains('owl') ||
+        lower.contains('insect') ||
+        lower.contains('cricket') ||
+        lower.contains('mosquito') ||
+        lower.contains('bee') ||
+        lower.contains('wasp') ||
+        lower.contains('frog') ||
+        lower.contains('snake') ||
+        lower.contains('whale') ||
+        lower.contains('ocean') ||
+        lower.contains('stream') ||
+        lower.contains('waterfall') ||
+        lower.contains('wave') ||
+        lower.contains('fire') ||
+        lower.contains('leaves') ||
+        lower.contains('environmental')) {
       return categoryNature;
     }
 
     // Market/Crowd keywords
-    if (lower.contains('market') || lower.contains('bazaar') || lower.contains('busy') ||
-        lower.contains('bustling') || lower.contains('crowded')) {
+    if (lower.contains('market') ||
+        lower.contains('bazaar') ||
+        lower.contains('busy') ||
+        lower.contains('bustling') ||
+        lower.contains('crowded')) {
       return categoryMarket;
     }
 
@@ -850,6 +1165,14 @@ class YAMNetClassMapping {
         return '🏪';
       case categoryNature:
         return '🌿';
+      case categoryDomestic:
+        return '🏠';
+      case categoryAlarm:
+        return '🚨';
+      case categoryBodySounds:
+        return '🫁';
+      case categoryTransport:
+        return '🚂';
       case categoryOther:
       default:
         return '🔊';
@@ -877,6 +1200,14 @@ class YAMNetClassMapping {
         return 0xFF00BCD4; // Cyan
       case categoryNature:
         return 0xFF4CAF50; // Green
+      case categoryDomestic:
+        return 0xFFFFB300; // Amber
+      case categoryAlarm:
+        return 0xFFC62828; // Deep Red
+      case categoryBodySounds:
+        return 0xFF9575CD; // Lavender
+      case categoryTransport:
+        return 0xFF1565C0; // Dark Blue
       case categoryOther:
       default:
         return 0xFF9E9E9E; // Grey

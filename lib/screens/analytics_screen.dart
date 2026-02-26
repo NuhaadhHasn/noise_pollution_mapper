@@ -723,14 +723,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         'Construction',
         'Industrial',
         'Tuk-tuk',
-        'Speech-Pollution'
+        'Transport',
+        'Alarm',
       ];
       final ambientCategories = [
         'Music',
         'Nature',
-        'Speech-Ambient',
+        'Speech',
         'Religious',
-        'Market'
+        'Market',
+        'Domestic',
+        'Body Sounds',
       ];
 
       for (var entry in _soundTypeCounts.entries) {

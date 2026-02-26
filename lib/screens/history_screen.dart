@@ -482,6 +482,14 @@ class HistoryScreen extends StatelessWidget {
         return Icons.nature;
       case 'tuk-tuk':
         return Icons.moped;
+      case 'domestic':
+        return Icons.home;
+      case 'alarm':
+        return Icons.alarm;
+      case 'body sounds':
+        return Icons.favorite_border;
+      case 'transport':
+        return Icons.train;
       default:
         return Icons.volume_up;
     }
