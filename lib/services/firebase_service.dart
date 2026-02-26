@@ -107,6 +107,19 @@ class FirebaseService {
         .snapshots();
   }
 
+  // One-shot fetch for classification data — avoids the broadcast-stream race
+  // condition where StreamBuilder consumes the first Firestore event before
+  // newStream.first can subscribe to it.
+  Future<QuerySnapshot> getUserReadingsByPeriodOnce(
+      String userId, DateTime since) {
+    return _firestore
+        .collection('noise_readings')
+        .where('userId', isEqualTo: userId)
+        .where('timestamp', isGreaterThan: Timestamp.fromDate(since))
+        .orderBy('timestamp', descending: true)
+        .get();
+  }
+
   // Calculate statistics for a specific time period
   // orderBy must match the existing composite index (userId ASC, timestamp DESC).
   Future<Map<String, double>> calculateStatsByPeriod(DateTime since) async {
@@ -120,19 +133,28 @@ class FirebaseService {
         .orderBy('timestamp', descending: true)
         .get();
 
+    final totalDocs = snapshot.docs.length;
+
     if (snapshot.docs.isEmpty) {
       return {'avg': 0, 'min': 0, 'max': 0, 'count': 0};
     }
 
+    // Null-safe: skip docs with missing/null decibelLevel instead of crashing
     final readings = snapshot.docs
-        .map((doc) => (doc.data()['decibelLevel'] as num).toDouble())
+        .map((doc) => (doc.data()['decibelLevel'] as num?)?.toDouble())
+        .whereType<double>()
         .toList();
+
+    if (readings.isEmpty) {
+      return {'avg': 0, 'min': 0, 'max': 0, 'count': totalDocs.toDouble()};
+    }
 
     return {
       'avg': readings.reduce((a, b) => a + b) / readings.length,
       'min': readings.reduce((a, b) => a < b ? a : b),
       'max': readings.reduce((a, b) => a > b ? a : b),
       'count': readings.length.toDouble(),
+      'totalDocs': totalDocs.toDouble(), // all docs in period, including unclassified
     };
   }
 

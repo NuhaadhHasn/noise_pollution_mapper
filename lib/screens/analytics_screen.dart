@@ -37,6 +37,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   int _pollutionCount = 0;
   int _ambientCount = 0;
   double _avgConfidence = 0.0;
+  int _totalCount = 0; // total readings in period (incl. unclassified)
 
   // Cached trend stream — only recreated when _selectedPeriod changes,
   // NOT on every setState (prevents Firestore re-subscription + chart flicker)
@@ -92,15 +93,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     try {
       final since = _getPeriodStartDate();
 
-      // Create the stream and cache it immediately so the chart always has
-      // a stream to listen to, even if the stats query below fails.
       final newStream =
           _firebaseService.getUserReadingsByPeriod(userId, since);
-      if (mounted) setState(() => _trendStream = newStream);
+
+      // Atomically update the stream AND clear all analytics data from
+      // the previous period. Without this, switching Monthly (0 data) →
+      // Weekly would show stale values until the new query resolves.
+      if (mounted) {
+        setState(() {
+          _trendStream = newStream;
+          _soundTypeCounts = {};
+          _pollutionCount = 0;
+          _ambientCount = 0;
+          _avgConfidence = 0.0;
+          _avgDb = 0;
+          _minDb = 0;
+          _maxDb = 0;
+          _totalHours = 0;
+          _totalCount = 0;
+        });
+      }
 
       // Load stats and classification counts for the selected period.
+      // getUserReadingsByPeriodOnce uses .get() — not newStream.first — to avoid
+      // the broadcast-stream race: StreamBuilder subscribes to newStream via the
+      // setState above, Firestore emits its initial event to it, and newStream.first
+      // would miss that event (broadcast streams don't buffer), hanging forever.
       final stats = await _firebaseService.calculateStatsByPeriod(since);
-      final snapshot = await newStream.first;
+      final snapshot =
+          await _firebaseService.getUserReadingsByPeriodOnce(userId, since);
 
       final soundTypeCounts = <String, int>{};
       int pollutionCount = 0;
@@ -140,6 +161,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         _minDb = stats['min'] ?? 0;
         _maxDb = stats['max'] ?? 0;
         _totalHours = (stats['count'] ?? 0) / 12;
+        _totalCount = (stats['totalDocs'] ?? stats['count'] ?? 0).toInt();
         _soundTypeCounts = soundTypeCounts;
         _pollutionCount = pollutionCount;
         _ambientCount = ambientCount;
@@ -256,14 +278,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Scaffold(
       backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
+        centerTitle: true,
         title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text('Analytics', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            Text('Analytics',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             Text('Noise Stats',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600)),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w400)),
           ],
         ),
         automaticallyImplyLeading: false,
@@ -295,6 +317,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Context banner
+                  _buildContextBanner(),
+
+                  const SizedBox(height: 16),
+
                   // Time-period chips (Daily | Weekly | Monthly)
                   _buildPeriodFilterChips(),
 
@@ -350,6 +377,94 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               ),
             ),
       bottomNavigationBar: null,
+    );
+  }
+
+  // ─── Context Banner ───────────────────────────────────────────────────────────
+
+  Widget _buildContextBanner() {
+    final primaryColor = ThemeHelper.getPrimaryColor(context);
+    final totalReadings = _totalCount; // all readings in period, incl. unclassified
+    final periodLabel = _getPeriodLabel();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: primaryColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: primaryColor.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: primaryColor.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.person_outline, color: primaryColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Your Personal Analytics',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextColor(context),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'All your recorded locations • $periodLabel',
+                  style: TextStyle(
+                    color: ThemeHelper.getSecondaryTextColor(context),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (totalReadings > 0) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: primaryColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    '$totalReadings',
+                    style: TextStyle(
+                      color: primaryColor,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      height: 1.1,
+                    ),
+                  ),
+                  Text(
+                    'readings',
+                    style: TextStyle(
+                      color: ThemeHelper.getSecondaryTextColor(context),
+                      fontSize: 10,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -917,6 +1032,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
                 return LineChart(
                   LineChartData(
+                    lineTouchData: LineTouchData(
+                      touchTooltipData: LineTouchTooltipData(
+                        getTooltipColor: (_) =>
+                            ThemeHelper.getPrimaryColor(context)
+                                .withValues(alpha: 0.9),
+                        getTooltipItems: (touchedSpots) {
+                          return touchedSpots.map((spot) {
+                            return LineTooltipItem(
+                              '${spot.y.toStringAsFixed(1)} dB',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            );
+                          }).toList();
+                        },
+                      ),
+                    ),
                     gridData: const FlGridData(show: false),
                     titlesData: FlTitlesData(
                       bottomTitles: AxisTitles(
