@@ -1416,7 +1416,7 @@ class YAMNetClassMapping {
       case categoryIndustrial:
         return '🏭';
       case categorySpeech:
-        return '💬';
+        return '🗣️';
       case categoryMusic:
         return '🎵';
       case categoryReligious:
@@ -1430,15 +1430,15 @@ class YAMNetClassMapping {
       case categoryAlarm:
         return '🚨';
       case categoryBodySounds:
-        return '🫁';
+        return '👤';
       case categoryTransport:
-        return '🚂';
+        return '🚆';
       case categorySports:
         return '⚽';
       case categoryWeather:
-        return '🌧️';
+        return '🌦️';
       case categoryOffice:
-        return '💻';
+        return '💼';
       case categoryOther:
       default:
         return '🔊';
