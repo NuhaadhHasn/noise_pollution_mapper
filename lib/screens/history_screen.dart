@@ -490,6 +490,12 @@ class HistoryScreen extends StatelessWidget {
         return Icons.favorite_border;
       case 'transport':
         return Icons.train;
+      case 'sports':
+        return Icons.sports_soccer;
+      case 'weather':
+        return Icons.cloud;
+      case 'office':
+        return Icons.business_center;
       default:
         return Icons.volume_up;
     }

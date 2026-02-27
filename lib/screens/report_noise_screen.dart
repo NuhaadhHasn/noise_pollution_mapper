@@ -30,12 +30,19 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
     {'value': 'Construction', 'type': 'Pollution', 'icon': Icons.construction},
     {'value': 'Industrial', 'type': 'Pollution', 'icon': Icons.factory},
     {'value': 'Tuk-tuk', 'type': 'Pollution', 'icon': Icons.moped},
+    {'value': 'Transport', 'type': 'Pollution', 'icon': Icons.train},
+    {'value': 'Alarm', 'type': 'Pollution', 'icon': Icons.alarm},
     {'value': 'Speech-Pollution', 'type': 'Pollution', 'icon': Icons.campaign},
     {'value': 'Music', 'type': 'Ambient', 'icon': Icons.music_note},
     {'value': 'Nature', 'type': 'Ambient', 'icon': Icons.nature},
     {'value': 'Speech-Ambient', 'type': 'Ambient', 'icon': Icons.person},
     {'value': 'Religious', 'type': 'Ambient', 'icon': Icons.temple_hindu},
     {'value': 'Market', 'type': 'Ambient', 'icon': Icons.store},
+    {'value': 'Domestic', 'type': 'Ambient', 'icon': Icons.home},
+    {'value': 'Body Sounds', 'type': 'Ambient', 'icon': Icons.favorite_border},
+    {'value': 'Sports', 'type': 'Ambient', 'icon': Icons.sports_soccer},
+    {'value': 'Weather', 'type': 'Ambient', 'icon': Icons.cloud},
+    {'value': 'Office', 'type': 'Ambient', 'icon': Icons.business_center},
   ];
 
   @override

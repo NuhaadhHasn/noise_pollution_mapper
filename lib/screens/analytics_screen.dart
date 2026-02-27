@@ -734,6 +734,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         'Market',
         'Domestic',
         'Body Sounds',
+        'Sports',
+        'Weather',
+        'Office',
       ];
 
       for (var entry in _soundTypeCounts.entries) {

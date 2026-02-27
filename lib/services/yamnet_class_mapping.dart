@@ -1,7 +1,8 @@
 /// YAMNet Class Mapping for Noise Pollution Categorization
-/// Maps YAMNet's 632 audio classes to custom pollution categories
+
+/// Maps YAMNet's 521 audio classes to custom pollution categories
 ///
-/// Categories:
+/// Categories (17 total):
 /// - Traffic: Cars, vehicles, engines, horns
 /// - Tuk-tuk: Three-wheelers (Sri Lankan specific)
 /// - Construction: Drilling, jackhammer, power tools
@@ -12,6 +13,13 @@
 /// - Market: Street vendors, market sounds
 /// - Nature: Birds, wind, rain, insects
 /// - Other: Unclassified ambient sounds
+/// - Domestic: Household appliances, doors, clocks
+/// - Alarm: Fire alarms, smoke detectors, buzzers
+/// - Body Sounds: Cough, sneeze, heartbeat, clapping
+/// - Transport: Train, aircraft, boat, subway
+/// - Sports: Gym, swimming, bowling, playground (NEW)
+/// - Weather: Rain, thunder, waves, waterfall (NEW)
+/// - Office: Printer, computer, radio, telephone (NEW)
 library;
 
 class YAMNetClassMapping {
@@ -30,6 +38,9 @@ class YAMNetClassMapping {
   static const String categoryAlarm = "Alarm";
   static const String categoryBodySounds = "Body Sounds";
   static const String categoryTransport = "Transport";
+  static const String categorySports = "Sports";
+  static const String categoryWeather = "Weather";
+  static const String categoryOffice = "Office";
 
   /// Pollution type classification
   static const String typePollution = "Pollution";
@@ -39,7 +50,8 @@ class YAMNetClassMapping {
   /// Maps class indices (0-520) to AudioSet class names
   /// Source: YAMNet AudioSet ontology
   static final Map<int, String> indexToClassName = {
-    // Speech and human sounds0: 'Speech',
+    // Speech and human sounds
+    0: 'Speech',
     1: 'Male speech, man speaking',
     2: 'Female speech, woman speaking',
     3: 'Child speech, kid speaking',
@@ -120,7 +132,7 @@ class YAMNetClassMapping {
     177: 'Double bass',
     178: 'Harp',
     179: 'Percussion',
-    180: 'Cowbell',
+    180: 'Cowbell (instrument)',
     181: 'Tambourine',
     182: 'Rattle (instrument)',
     183: 'Marimba, xylophone',
@@ -213,7 +225,7 @@ class YAMNetClassMapping {
     44: 'Cat',
     45: 'Meow',
     46: 'Purr',
-    47: 'Hiss',
+    47: 'Hiss (cat)',
     48: 'Livestock, farm animals, working animals',
     49: 'Horse',
     50: 'Clip-clop',
@@ -389,6 +401,63 @@ class YAMNetClassMapping {
     345: 'Creak',
     346: 'Scrape',
     347: 'Rub',
+
+    // Sports and recreation
+    374: 'Gym',
+    375: 'Weight lifting',
+    376: 'Exercise',
+    377: 'Aerobics',
+    378: 'Yoga',
+    379: 'Stretching',
+    380: 'Running',
+    381: 'Jogging',
+    382: 'Treadmill',
+    383: 'Bowling',
+    384: 'Billiards',
+    385: 'Pool (game)',
+    386: 'Swimming',
+    387: 'Diving',
+    481: 'Water polo',
+    482: 'Playground',
+    484: 'Stadium',
+    485: 'Sports crowd',
+    486: 'Audience',
+    487: 'Cheering (sports)',
+    488: 'Booing',
+    489: 'Whistle (referee)',
+    490: 'Air horn (sports)',
+    491: 'Skateboard (trick)',
+    492: 'Surfing',
+    493: 'Snowboarding',
+    494: 'Skiing',
+    495: 'Ice skating',
+    496: 'Rollerblading',
+    497: 'Cycling (sport)',
+    498: 'Mountain biking',
+    499: 'Rock climbing',
+    500: 'Martial arts',
+    501: 'Boxing',
+    502: 'Wrestling',
+    503: 'Fencing',
+
+    // Office and technology
+    504: 'Printer',
+    505: 'Copier',
+    506: 'Scanner',
+    507: 'Fax',
+    508: 'Computer fan',
+    509: 'Hard drive',
+    510: 'Keyboard click',
+    511: 'Mouse click',
+    512: 'Office ambient',
+    513: 'Cubicle',
+    514: 'Meeting room',
+    515: 'Conference call',
+    516: 'Radio',
+    517: 'Broadcast',
+    518: 'Podcast',
+    519: 'News broadcast',
+    520: 'Talk show',
   };
 
   /// Map YAMNet class names to our custom categories
@@ -404,6 +473,8 @@ class YAMNetClassMapping {
     'Engine': categoryTraffic,
     'Engine starting': categoryTraffic,
     'Idling': categoryTraffic,
+    'Revving': categoryTraffic,
+    'Accelerating': categoryTraffic,
     'Traffic noise, roadway noise': categoryTraffic,
     'Truck': categoryTraffic,
     'Bus': categoryTraffic,
@@ -489,6 +560,7 @@ class YAMNetClassMapping {
     'Burping, eructation': categoryBodySounds,
     'Hiccup': categoryBodySounds,
     'Fart': categoryBodySounds,
+    'Shuffle': categoryBodySounds,
 
     // Music
     'Music': categoryMusic,
@@ -534,6 +606,8 @@ class YAMNetClassMapping {
     'Hi-hat': categoryMusic,
     'Percussion': categoryMusic,
     'Tambourine': categoryMusic,
+    'Cowbell (instrument)': categoryMusic,
+    'Tuning fork': categoryMusic,
     'Marimba, xylophone': categoryMusic,
     'Rattle (instrument)': categoryMusic,
     'Singing': categoryMusic,
@@ -632,6 +706,10 @@ class YAMNetClassMapping {
     'Typewriter': categoryDomestic,
     'Computer keyboard': categoryDomestic,
     'Writing': categoryDomestic,
+    'Mechanical pencil': categoryDomestic,
+    'Cupboard open or close': categoryDomestic,
+    'Drawer open or close': categoryDomestic,
+    'Creak': categoryDomestic,
     'Clock': categoryDomestic,
     'Tick': categoryDomestic,
     'Tick-tock': categoryDomestic,
@@ -650,14 +728,16 @@ class YAMNetClassMapping {
     'Smoke detector, smoke alarm': categoryAlarm,
     'Fire alarm': categoryAlarm,
     'Foghorn': categoryTransport,
-    'Whistle': categoryOther,
-    'Steam whistle': categoryOther,
     'Emergency vehicle': categoryTraffic,
     'Police car (siren)': categoryTraffic,
     'Ambulance (siren)': categoryTraffic,
     'Fire engine, fire truck (siren)': categoryTraffic,
     'Air horn, truck horn': categoryTraffic,
     'Reversing beeps': categoryTraffic,
+    'Steam whistle': categoryTransport,
+    'Whistle (referee)': categorySports,
+    'Mouth whistle': categoryBodySounds,
+    'Whistle': categoryOther,
 
     // More transportation
     'Train': categoryTransport,
@@ -672,9 +752,9 @@ class YAMNetClassMapping {
     'Propeller, airscrew': categoryTransport,
     'Helicopter': categoryTransport,
     'Fixed-wing aircraft, airplane': categoryTransport,
-    'Bicycle': categoryOther,
-    'Bicycle bell': categoryOther,
-    'Skateboard': categoryOther,
+    'Bicycle': categoryTransport,
+    'Bicycle bell': categoryTransport,
+    'Skateboard': categoryTransport,
     'Car passing by': categoryTraffic,
     'Race car, auto racing': categoryTraffic,
     'Auto rickshaw': categoryTuktuk,
@@ -701,6 +781,7 @@ class YAMNetClassMapping {
     'Cat': categoryNature,
     'Meow': categoryNature,
     'Purr': categoryNature,
+    'Hiss (cat)': categoryNature,
     'Livestock, farm animals, working animals': categoryNature,
     'Horse': categoryNature,
     'Neigh, whinny': categoryNature,
@@ -724,15 +805,18 @@ class YAMNetClassMapping {
     'Honk': categoryNature,
     'Frog': categoryNature,
     'Croak': categoryNature,
-    'Wind': categoryNature,
-    'Wind noise (microphone)': categoryNature,
+    'Wind': categoryWeather,
+    'Wind noise (microphone)': categoryWeather,
     'Rustling leaves': categoryNature,
     'Wind chime': categoryNature,
-    'Rain': categoryNature,
-    'Raindrop': categoryNature,
-    'Rain on surface': categoryNature,
-    'Thunder': categoryNature,
-    'Thunderstorm': categoryNature,
+    'Rain': categoryWeather,
+    'Raindrop': categoryWeather,
+    'Rain on surface': categoryWeather,
+    'Thunder': categoryWeather,
+    'Thunderstorm': categoryWeather,
+    'Lightning': categoryWeather,
+    'Breeze': categoryWeather,
+    'Gust': categoryWeather,
     'Water': categoryNature,
     'Stream': categoryNature,
     'Waterfall': categoryNature,
@@ -740,6 +824,7 @@ class YAMNetClassMapping {
     'Waves, surf': categoryNature,
     'Gurgling': categoryNature,
     'Fire': categoryNature,
+    'Crackle': categoryNature,
     'Roaring': categoryNature,
     'Insect': categoryNature,
     'Cricket': categoryNature,
@@ -751,6 +836,77 @@ class YAMNetClassMapping {
     'Rattle': categoryNature,
     'Whale vocalization': categoryNature,
     'Environmental sounds': categoryNature,
+    'Rustle': categoryNature,
+    'Bow-wow': categoryNature,
+    'Bay': categoryNature,
+    'Clip-clop': categoryNature,
+
+    // Sports and recreation (NEW)
+    'Gym': categorySports,
+    'Weight lifting': categorySports,
+    'Exercise': categorySports,
+    'Aerobics': categorySports,
+    'Yoga': categorySports,
+    'Stretching': categorySports,
+    'Running': categorySports,
+    'Jogging': categorySports,
+    'Treadmill': categorySports,
+    'Bowling': categorySports,
+    'Billiards': categorySports,
+    'Pool (game)': categorySports,
+    'Swimming': categorySports,
+    'Diving': categorySports,
+    'Water polo': categorySports,
+    'Playground': categorySports,
+    'Stadium': categorySports,
+    'Sports crowd': categorySports,
+    'Audience': categorySports,
+    'Cheering (sports)': categorySports,
+    'Booing': categorySports,
+    'Air horn (sports)': categorySports,
+    'Skateboard (trick)': categorySports,
+    'Surfing': categorySports,
+    'Snowboarding': categorySports,
+    'Skiing': categorySports,
+    'Ice skating': categorySports,
+    'Rollerblading': categorySports,
+    'Cycling (sport)': categorySports,
+    'Mountain biking': categorySports,
+    'Rock climbing': categorySports,
+    'Martial arts': categorySports,
+    'Boxing': categorySports,
+    'Wrestling': categorySports,
+    'Fencing': categorySports,
+
+    // Office and technology (NEW)
+    'Printer': categoryOffice,
+    'Copier': categoryOffice,
+    'Scanner': categoryOffice,
+    'Fax': categoryOffice,
+    'Computer fan': categoryOffice,
+    'Hard drive': categoryOffice,
+    'Keyboard click': categoryOffice,
+    'Mouse click': categoryOffice,
+    'Office ambient': categoryOffice,
+    'Cubicle': categoryOffice,
+    'Meeting room': categoryOffice,
+    'Conference call': categoryOffice,
+    'Radio': categoryOffice,
+    'Broadcast': categoryOffice,
+    'Podcast': categoryOffice,
+    'News broadcast': categoryOffice,
+    'Talk show': categoryOffice,
+    'Answering machine': categoryOffice,
+    'Voicemail': categoryOffice,
+    'Cash register': categoryOffice,
+    'ATM': categoryOffice,
+    'Point of sale': categoryOffice,
+    'Barcode scanner': categoryOffice,
+    'Calculator': categoryOffice,
+    'Projector': categoryOffice,
+    'Whiteboard': categoryOffice,
+    'Shredder': categoryOffice,
+    'Stapler': categoryOffice,
 
     // Other / Ambient
     'Silence': categoryOther,
@@ -759,6 +915,12 @@ class YAMNetClassMapping {
     'Pink noise': categoryOther,
     'Static': categoryOther,
     'Hiss': categoryOther,
+    'Pop': categoryOther,
+    'Crack': categoryOther,
+    'Crunch': categoryOther,
+    'Whir': categoryOther,
+    'Clang': categoryOther,
+    'Thump': categoryOther,
     'Ambient music': categoryMusic,
   };
 
@@ -783,6 +945,9 @@ class YAMNetClassMapping {
       case categoryOther:
       case categoryDomestic:
       case categoryBodySounds:
+      case categorySports:
+      case categoryWeather:
+      case categoryOffice:
         return typeAmbient;
 
       default:
@@ -840,12 +1005,13 @@ class YAMNetClassMapping {
       if (classIndex >= 137 && classIndex <= 228) return categoryMusic;
       if (classIndex >= 0 && classIndex <= 15) return categorySpeech;
       if (classIndex >= 16 && classIndex <= 35) return categoryBodySounds;
-      if (classIndex >= 36 && classIndex <= 108) return categoryNature;
+      if (classIndex >= 36 && classIndex <= 136) return categoryNature;   // 36-108 animals, 109-136 more animals
       if (classIndex >= 229 && classIndex <= 309) return categoryDomestic;
-      if (classIndex >= 310 && classIndex <= 387) return categoryTraffic;
+      if (classIndex >= 310 && classIndex <= 373) return categoryTraffic;  // 323-347 have named entries; raw gaps default to Traffic
+      if (classIndex >= 374 && classIndex <= 387) return categorySports;
       if (classIndex >= 388 && classIndex <= 393) return categoryConstruction;
       if (classIndex >= 394 && classIndex <= 399) return categoryIndustrial;
-      // Indices 109-136 and 400-520: fall through to keyword checks below
+      // Indices 137-228 (Music), 400-520: fall through to keyword checks below
     }
 
     // Transport keywords (train, aircraft — checked before general Traffic)
@@ -1036,15 +1202,12 @@ class YAMNetClassMapping {
         lower.contains('fan') ||
         lower.contains('air conditioning') ||
         lower.contains('hum') ||
-        lower.contains('buzz') ||
         lower.contains('chainsaw') ||
         lower.contains('mower') ||
         lower.contains('compressor') ||
         lower.contains('grinder') ||
         lower.contains('boiler') ||
-        lower.contains('diesel') ||
-        lower.contains('dishwasher') ||
-        lower.contains('washing machine')) {
+        lower.contains('diesel')) {
       return categoryIndustrial;
     }
 
@@ -1069,7 +1232,10 @@ class YAMNetClassMapping {
         lower.contains('dishwasher') ||
         lower.contains('washing machine') ||
         lower.contains('oven') ||
-        lower.contains('toaster')) {
+        lower.contains('toaster') ||
+        lower.contains('cupboard') ||
+        lower.contains('drawer') ||
+        lower.contains('creak')) {
       return categoryDomestic;
     }
 
@@ -1085,14 +1251,23 @@ class YAMNetClassMapping {
       return categoryReligious;
     }
 
+    // Weather keywords — checked BEFORE Nature so rain/wind/thunder route here
+    if (lower.contains('rain') ||
+        lower.contains('raindrop') ||
+        lower.contains('thunder') ||
+        lower.contains('storm') ||
+        lower.contains('lightning') ||
+        lower.contains('wind') ||
+        lower.contains('breeze') ||
+        lower.contains('gust')) {
+      return categoryWeather;
+    }
+
     // Nature keywords
     if (lower.contains('bird') ||
         lower.contains('animal') ||
         lower.contains('dog') ||
         lower.contains('cat') ||
-        lower.contains('wind') ||
-        lower.contains('rain') ||
-        lower.contains('thunder') ||
         lower.contains('water') ||
         lower.contains('nature') ||
         lower.contains('chirp') ||
@@ -1127,6 +1302,9 @@ class YAMNetClassMapping {
         lower.contains('wave') ||
         lower.contains('fire') ||
         lower.contains('leaves') ||
+        lower.contains('rustle') ||
+        lower.contains('bow-wow') ||
+        lower.contains('clip-clop') ||
         lower.contains('environmental')) {
       return categoryNature;
     }
@@ -1138,6 +1316,88 @@ class YAMNetClassMapping {
         lower.contains('bustling') ||
         lower.contains('crowded')) {
       return categoryMarket;
+    }
+
+    // Sports keywords (NEW)
+    if (lower.contains('gym') ||
+        lower.contains('sport') ||
+        lower.contains('weight') ||
+        lower.contains('exercise') ||
+        lower.contains('aerobics') ||
+        lower.contains('yoga') ||
+        lower.contains('stretch') ||
+        lower.contains('run') ||
+        lower.contains('jog') ||
+        lower.contains('treadmill') ||
+        lower.contains('bowl') ||
+        lower.contains('billiard') ||
+        lower.contains('pool') ||
+        lower.contains('swim') ||
+        lower.contains('dive') ||
+        lower.contains('playground') ||
+        lower.contains('stadium') ||
+        lower.contains('cheer') ||
+        lower.contains('boo') ||
+        lower.contains('whistle (referee)') ||
+        lower.contains('referee') ||
+        lower.contains('skate') ||
+        lower.contains('surf') ||
+        lower.contains('snowboard') ||
+        lower.contains('ski') ||
+        lower.contains('rollerblad') ||
+        lower.contains('cycle') ||
+        lower.contains('bike') ||
+        lower.contains('climb') ||
+        lower.contains('martial') ||
+        lower.contains('box') ||
+        lower.contains('wrestl') ||
+        lower.contains('fence')) {
+      return categorySports;
+    }
+
+    // Body sounds keywords (NEW)
+    if (lower.contains('whistle') ||
+        lower.contains('mouth whistle')) {
+      return categoryBodySounds;
+    }
+
+    // Transport keywords (NEW)
+    if (lower.contains('bicycle') ||
+        lower.contains('bike') ||
+        lower.contains('skateboard') ||
+        lower.contains('steam whistle')) {
+      return categoryTransport;
+    }
+
+    // Office keywords (NEW)
+    if (lower.contains('printer') ||
+        lower.contains('copier') ||
+        lower.contains('scanner') ||
+        lower.contains('fax') ||
+        lower.contains('computer') ||
+        lower.contains('office') ||
+        lower.contains('keyboard') ||
+        lower.contains('mouse') ||
+        lower.contains('cubicle') ||
+        lower.contains('meeting') ||
+        lower.contains('conference') ||
+        lower.contains('radio') ||
+        lower.contains('broadcast') ||
+        lower.contains('podcast') ||
+        lower.contains('news') ||
+        lower.contains('talk show') ||
+        lower.contains('telephone') ||
+        lower.contains('answering') ||
+        lower.contains('voicemail') ||
+        lower.contains('cash register') ||
+        lower.contains('atm') ||
+        lower.contains('barcode') ||
+        lower.contains('calculator') ||
+        lower.contains('projector') ||
+        lower.contains('whiteboard') ||
+        lower.contains('shredder') ||
+        lower.contains('stapler')) {
+      return categoryOffice;
     }
 
     // Default to OTHER if no match found
@@ -1173,6 +1433,12 @@ class YAMNetClassMapping {
         return '🫁';
       case categoryTransport:
         return '🚂';
+      case categorySports:
+        return '⚽';
+      case categoryWeather:
+        return '🌧️';
+      case categoryOffice:
+        return '💻';
       case categoryOther:
       default:
         return '🔊';
@@ -1208,6 +1474,12 @@ class YAMNetClassMapping {
         return 0xFF9575CD; // Lavender
       case categoryTransport:
         return 0xFF1565C0; // Dark Blue
+      case categorySports:
+        return 0xFF43A047; // Green (sports)
+      case categoryWeather:
+        return 0xFF039BE5; // Light Blue (weather)
+      case categoryOffice:
+        return 0xFF5E35B1; // Deep Purple (office)
       case categoryOther:
       default:
         return 0xFF9E9E9E; // Grey
