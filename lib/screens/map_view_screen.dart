@@ -70,7 +70,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
       });
     } else {
       _loadSavedMapPosition(); // Load last map position
-      _getCurrentLocation();
+      // Don't auto-request location on startup (Dashboard handles it)
+      // Location will be requested when user clicks FAB or navigates
     }
     // Load markers once on startup
     _loadNoiseMarkers();
@@ -104,15 +105,19 @@ class _MapViewScreenState extends State<MapViewScreen> {
     try {
       final snapshot = await _firebaseService.getNoiseReadingsOnce();
       final markers = _buildMarkersFromSnapshot(snapshot);
-      setState(() {
-        _cachedMarkers = markers;
-        _isLoadingMarkers = false;
-      });
+      if (mounted) {
+        setState(() {
+          _cachedMarkers = markers;
+          _isLoadingMarkers = false;
+        });
+      }
     } catch (e) {
       AppLogger.error('Error loading noise markers', e);
-      setState(() {
-        _isLoadingMarkers = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingMarkers = false;
+        });
+      }
     }
   }
 
@@ -207,26 +212,97 @@ class _MapViewScreenState extends State<MapViewScreen> {
     }
   }
 
-  Future<void> _getCurrentLocation() async {
+  // Location request debouncing to prevent duplicate dialogs
+  bool _isGettingLocation = false;
+  DateTime? _lastLocationRequestTime;
+  static const Duration _locationRequestDebounce = Duration(seconds: 30);
+
+  Future<void> _getCurrentLocation({bool forceRefresh = false}) async {
+    // Prevent concurrent location requests (unless force refresh)
+    if (!forceRefresh && _isGettingLocation) {
+      AppLogger.debug('Map: Location request already in progress, skipping');
+      return;
+    }
+
+    // Debounce rapid requests (except for force refresh)
+    if (!forceRefresh) {
+      final now = DateTime.now();
+      if (_lastLocationRequestTime != null &&
+          now.difference(_lastLocationRequestTime!) < _locationRequestDebounce) {
+        AppLogger.debug('Map: Location request debounced (too soon)');
+        return;
+      }
+    }
+
+    _isGettingLocation = true;
+    _lastLocationRequestTime = DateTime.now();
+
     try {
       final permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         await Geolocator.requestPermission();
       }
 
-      final position = await Geolocator.getCurrentPosition();
-      setState(() {
-        _currentLocation = LatLng(position.latitude, position.longitude);
-        _isLoadingLocation = false;
-      });
+      // Check if location services are enabled
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) {
+          setState(() {
+            _isLoadingLocation = false;
+          });
+        }
+        _isGettingLocation = false;
+        // Show native Android location settings dialog
+        _showNativeLocationDialog();
+        return;
+      }
 
-      // Move map to current location
-      _mapController.move(_currentLocation, 13.0);
+      final position = await Geolocator.getCurrentPosition();
+      if (mounted) {
+        setState(() {
+          _currentLocation = LatLng(position.latitude, position.longitude);
+          _isLoadingLocation = false;
+        });
+
+        // Move map to current location
+        _mapController.move(_currentLocation, 13.0);
+      }
     } catch (e) {
-      AppLogger.error('Error getting location', e);
-      setState(() {
-        _isLoadingLocation = false;
-      });
+      AppLogger.error('Map: Error getting location', e);
+      if (mounted) {
+        setState(() {
+          _isLoadingLocation = false;
+        });
+      }
+    } finally {
+      _isGettingLocation = false;
+    }
+  }
+
+  // Show native Android location settings dialog
+  Future<void> _showNativeLocationDialog() async {
+    if (!mounted) return;
+    
+    AppLogger.info('Map: 🔵 Showing native location dialog...');
+    
+    try {
+      // This shows the native Android location settings dialog
+      final locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      );
+      
+      await Geolocator.getCurrentPosition(locationSettings: locationSettings);
+      
+      // If user enabled location and we got position, refresh location
+      if (mounted) {
+        AppLogger.info('Map: ✅ User enabled location, refreshing...');
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _getCurrentLocation(forceRefresh: true);
+      }
+    } catch (e) {
+      // User declined or dialog closed without enabling
+      AppLogger.debug('Map: User declined to enable location services');
     }
   }
 
@@ -783,7 +859,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
               child: FloatingActionButton(
                 heroTag: 'map_location_btn',
                 backgroundColor: ThemeHelper.getPrimaryColor(context),
-                onPressed: () {
+                onPressed: () async {
+                  // Refresh location first (force refresh, bypass debounce)
+                  await _getCurrentLocation(forceRefresh: true);
+                  // Then move map to new location
                   _mapController.move(_currentLocation, 13.0);
                 },
                 child: const Icon(Icons.my_location, color: Colors.white),

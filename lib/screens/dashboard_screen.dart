@@ -11,6 +11,7 @@ import '../theme/app_theme.dart';
 import '../utils/animations.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
+import '../utils/shared_app_state.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
 import 'settings_screen_enhanced.dart';
@@ -30,7 +31,7 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
   final FirebaseService _firebaseService = FirebaseService();
   final SoundClassificationService _classificationService =
       SoundClassificationService();
@@ -60,8 +61,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double _latitude = 6.9271; // Colombo default
   double _longitude = 79.8612;
   bool _isLocationLoading = true;
-  int _locationRetryCount = 0;
-  static const int _maxLocationRetries = 3;
 
   // Timer for periodic Firebase saves (don't save every reading, save every 5 seconds)
   Timer? _saveTimer;
@@ -76,13 +75,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ClassificationResult? _currentClassification;
   bool _isClassifying = false;
 
+  // Prevent concurrent location requests
+  bool _isGettingLocation = false;
+  DateTime? _lastLocationRequestTime;
+  static const Duration _locationRequestDebounce = Duration(seconds: 30);
+  
+  // Track if location dialog already shown APP-WIDE (prevent duplicate dialogs across screens)
+  // Using SharedAppState for cross-screen communication
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeAudioRecorder();
     _requestPermissions();
-    _getCurrentLocation(); // Get GPS location on start
+    // Call location immediately (no delay - delay causes race condition)
+    _getCurrentLocation();
     AppLogger.debug('User ID: ${FirebaseAuth.instance.currentUser?.uid}');
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // When user returns from settings (app resumes), check if location is now enabled
+    if (state == AppLifecycleState.resumed) {
+      AppLogger.info('📍 App resumed, checking if location was enabled...');
+      // Small delay to ensure screen is fully built
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _checkAndRefreshLocation();
+        }
+      });
+    }
+  }
+
+  // Check if location should be refreshed (called when screen becomes visible)
+  Future<void> _checkAndRefreshLocation() async {
+    if (!mounted) return;
+    
+    // Check if location services are now enabled
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    
+    if (serviceEnabled && _locationName == 'Location services disabled') {
+      // Location was enabled - refresh!
+      AppLogger.info('📍 Location enabled while screen was inactive, refreshing...');
+      // Reset shared flag so dialog can show again if needed
+      SharedAppState.locationDialogShown = false;
+      await _getCurrentLocation(forceRefresh: true);
+    } else if (!serviceEnabled && !_locationName.contains('disabled') && !_locationName.contains('denied')) {
+      // Location was disabled - update UI to show disabled state
+      AppLogger.info('📍 Location disabled while screen was inactive, updating UI...');
+      setState(() {
+        _isLocationLoading = false;
+        _locationName = 'Location services disabled';
+      });
+    }
   }
 
   // Initialize audio recorder for sound classification
@@ -106,11 +153,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // Get current GPS location with retry mechanism
-  Future<void> _getCurrentLocation({bool isRetry = false}) async {
-    if (!isRetry) {
-      _locationRetryCount = 0;
+  // Get current GPS location with retry mechanism and debouncing
+  Future<void> _getCurrentLocation({bool isRetry = false, bool forceRefresh = false}) async {
+    // Prevent concurrent location requests (unless force refresh)
+    if (!forceRefresh && _isGettingLocation) {
+      AppLogger.debug('Location request already in progress, skipping');
+      return;
     }
+
+    // Debounce rapid requests (except for retries and force refresh)
+    if (!forceRefresh && !isRetry) {
+      final now = DateTime.now();
+      if (_lastLocationRequestTime != null &&
+          now.difference(_lastLocationRequestTime!) < _locationRequestDebounce) {
+        AppLogger.debug('Location request debounced (too soon)');
+        return;
+      }
+    }
+
+    _isGettingLocation = true;
+    _lastLocationRequestTime = DateTime.now();
 
     try {
       if (mounted) {
@@ -135,6 +197,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _locationName = 'Location permission denied';
           });
         }
+        _isGettingLocation = false;
+        // Show native Android location settings dialog
+        _showNativeLocationDialog();
+        return;
+      }
+
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        AppLogger.warning('Location service is disabled');
+        if (mounted) {
+          setState(() {
+            _isLocationLoading = false;
+            _locationName = 'Location services disabled';
+          });
+        }
+        _isGettingLocation = false;
+        // Show native Android location settings dialog
+        _showNativeLocationDialog();
         return;
       }
 
@@ -205,24 +286,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
     } catch (e) {
-      AppLogger.error('Error getting location (attempt ${_locationRetryCount + 1})', e);
+      AppLogger.error('Error getting location', e);
 
-      // Retry logic
-      if (_locationRetryCount < _maxLocationRetries && mounted) {
-        _locationRetryCount++;
-        AppLogger.info('Retrying location fetch... ($_locationRetryCount/$_maxLocationRetries)');
-        await Future.delayed(const Duration(seconds: 2));
-        await _getCurrentLocation(isRetry: true);
-      } else {
-        // All retries failed
-        if (mounted) {
-          setState(() {
-            _isLocationLoading = false;
-            _locationName = 'Unknown Location';
-          });
-        }
-        AppLogger.warning('Failed to get location after $_maxLocationRetries attempts');
+      // Don't retry - show dialog immediately (but not if already showing)
+      if (mounted && !SharedAppState.locationDialogShown) {
+        setState(() {
+          _isLocationLoading = false;
+          _locationName = 'Location services disabled';
+        });
+        // Show native Android location settings dialog
+        _showNativeLocationDialog();
       }
+    } finally {
+      // Always reset the location flag when done (but not dialog flag)
+      _isGettingLocation = false;
     }
   }
 
@@ -247,11 +324,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // Show native Android location settings dialog
+  Future<void> _showNativeLocationDialog() async {
+    if (!mounted || SharedAppState.locationDialogShown) return;
+    
+    // Set shared flag to prevent other screens from showing dialog
+    SharedAppState.locationDialogShown = true;
+    AppLogger.info('🔵 Showing native location dialog...');
+    
+    try {
+      // This shows the native Android location settings dialog
+      final locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      );
+      
+      await Geolocator.getCurrentPosition(locationSettings: locationSettings);
+      
+      // If user enabled location and we got position, refresh location
+      if (mounted) {
+        AppLogger.info('✅ User enabled location, refreshing...');
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _getCurrentLocation(forceRefresh: true);
+      }
+    } catch (e) {
+      // User declined or dialog closed without enabling
+      AppLogger.debug('User declined to enable location services');
+    }
+  }
+
   // Start noise measurement
   void _startRecording() async {
     try {
-      // Refresh location when recording starts
-      _getCurrentLocation();
+      // Location already fetched on screen start, no need to request again
 
       // Start noise meter for dB readings
       _noiseMeter = NoiseMeter();
@@ -470,8 +575,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stopRecording();
     _audioRecorder?.closeRecorder();
+    // Don't reset locationDialogShown - it's static and shared across app lifetime
     super.dispose();
   }
 
@@ -555,49 +662,64 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               const SizedBox(height: 24),
 
-              // Location label with loading indicator
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: ThemeHelper.getCardColor(context),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_isLocationLoading)
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            ThemeHelper.getPrimaryColor(context),
+              // Location label with loading indicator (CLICKABLE TO REFRESH)
+              GestureDetector(
+                onTap: _isLocationLoading ? null : () {
+                  AppLogger.info('📍 User tapped location to refresh');
+                  _getCurrentLocation(forceRefresh: true);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ThemeHelper.getCardColor(context),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isLocationLoading)
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              ThemeHelper.getPrimaryColor(context),
+                            ),
+                          ),
+                        )
+                      else
+                        Icon(
+                          Icons.location_on,
+                          color: ThemeHelper.getPrimaryColor(context),
+                          size: 16,
+                        ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _locationName,
+                          style: TextStyle(
+                            color: ThemeHelper.getTextColor(context),
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (!_isLocationLoading)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Icon(
+                            Icons.refresh,
+                            color: ThemeHelper.getSecondaryTextColor(context),
+                            size: 14,
                           ),
                         ),
-                      )
-                    else
-                      Icon(
-                        Icons.location_on,
-                        color: ThemeHelper.getPrimaryColor(context),
-                        size: 16,
-                      ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        _locationName,
-                        style: TextStyle(
-                          color: ThemeHelper.getTextColor(context),
-                          fontSize: 14,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
 
