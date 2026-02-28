@@ -120,6 +120,13 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
     _lastLocationRequestTime = DateTime.now();
 
     try {
+      // Show loading state
+      if (mounted) {
+        setState(() {
+          _locationName = 'Fetching location...';
+        });
+      }
+
       // Check permission
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
@@ -473,8 +480,10 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
 
             const SizedBox(height: 24),
 
-            // Location button (full width, clickable to refresh)
-            _buildLocationActionButton(),
+            // Location button (pill style, centered like Dashboard)
+            Center(
+              child: _buildLocationActionButton(),
+            ),
           ],
         ),
       ),
@@ -496,28 +505,37 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
     );
   }
 
-  // Location action button with loading state and refresh icon
+  // Location action button with loading state and refresh icon (PILL STYLE like Dashboard)
   Widget _buildLocationActionButton() {
     return InkWell(
-      onTap: _isGettingLocation ? null : () {
+      onTap: _isGettingLocation ? null : () async {
         AppLogger.info('Report: 📍 User tapped location to refresh');
-        _getCurrentLocation(forceRefresh: true);
+        // Check if location is disabled - if so, show dialog
+        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!serviceEnabled) {
+          AppLogger.info('Report: 📍 Location disabled, showing native dialog...');
+          // Reset flag to allow dialog to show again
+          SharedAppState.locationDialogShown = false;
+          _showNativeLocationDialog();
+        } else {
+          // Location enabled - just refresh
+          _getCurrentLocation(forceRefresh: true);
+        }
       },
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
           color: ThemeHelper.getCardColor(context),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: ThemeHelper.getPrimaryColor(context).withValues(alpha:0.3)),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             if (_isGettingLocation)
               SizedBox(
-                width: 20,
-                height: 20,
+                width: 16,
+                height: 16,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation<Color>(
@@ -526,7 +544,11 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
                 ),
               )
             else
-              Icon(Icons.location_on, color: ThemeHelper.getPrimaryColor(context), size: 20),
+              Icon(
+                Icons.location_on,
+                color: ThemeHelper.getPrimaryColor(context),
+                size: 16,
+              ),
             const SizedBox(width: 8),
             Flexible(
               child: Text(
@@ -534,8 +556,8 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
                 style: TextStyle(
                   color: ThemeHelper.getTextColor(context),
                   fontSize: 14,
-                  fontWeight: FontWeight.w600,
                 ),
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -545,7 +567,7 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
                 child: Icon(
                   Icons.refresh,
                   color: ThemeHelper.getSecondaryTextColor(context),
-                  size: 16,
+                  size: 14,
                 ),
               ),
           ],

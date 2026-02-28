@@ -664,9 +664,19 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
               // Location label with loading indicator (CLICKABLE TO REFRESH)
               GestureDetector(
-                onTap: _isLocationLoading ? null : () {
+                onTap: _isLocationLoading ? null : () async {
                   AppLogger.info('📍 User tapped location to refresh');
-                  _getCurrentLocation(forceRefresh: true);
+                  // Check if location is disabled - if so, show dialog
+                  final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+                  if (!serviceEnabled) {
+                    AppLogger.info('📍 Location disabled, showing native dialog...');
+                    // Reset flag to allow dialog to show again
+                    SharedAppState.locationDialogShown = false;
+                    _showNativeLocationDialog();
+                  } else {
+                    // Location enabled - just refresh
+                    _getCurrentLocation(forceRefresh: true);
+                  }
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(
