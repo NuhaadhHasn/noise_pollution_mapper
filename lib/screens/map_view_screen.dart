@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_marker_cluster/flutter_map_marker_cluster.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -49,6 +50,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
   // FIXED: Cache for markers to avoid rebuilding on every frame
   List<Marker> _cachedMarkers = [];
   bool _isLoadingMarkers = false;
+  
+  // Store noise levels for cluster coloring
+  final Map<String, double> _markerNoiseLevels = {};
 
   @override
   void initState() {
@@ -124,6 +128,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
   // FIXED: Build markers from cached snapshot (extracted for reusability)
   List<Marker> _buildMarkersFromSnapshot(QuerySnapshot? snapshot) {
     List<Marker> markers = [];
+    
+    // Clear previous noise levels
+    _markerNoiseLevels.clear();
 
     if (snapshot == null || snapshot.docs.isEmpty) {
       return markers;
@@ -153,6 +160,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
           'Marker at $location has no classification data (likely old recording)',
         );
       }
+
+      // Store noise level for cluster coloring
+      final markerKey = '${lat}_$lng';
+      _markerNoiseLevels[markerKey] = db;
 
       markers.add(
         Marker(
@@ -581,9 +592,72 @@ class _MapViewScreenState extends State<MapViewScreen> {
                       'com.noisemapper.noise_pollution_mapper',
                 ),
 
-                // FIXED: Noise markers from cache (not StreamBuilder)
+                // FIXED: Noise markers with clustering (markers within 50m auto-cluster)
                 if (_cachedMarkers.isNotEmpty)
-                  MarkerLayer(markers: _cachedMarkers),
+                  MarkerClusterLayerWidget(
+                    options: MarkerClusterLayerOptions(
+                      // Cluster appearance
+                      maxClusterRadius: 45,        // Cluster markers within 45px radius
+                      size: const Size(40, 40),    // Cluster circle size
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.all(50),
+                      
+                      // Clustering behavior
+                      maxZoom: 15,                 // Cluster up to zoom 15
+                      disableClusteringAtZoom: 16, // Show individual markers at zoom 16+
+                      
+                      // Simple cluster builder
+                      builder: (context, markers) {
+                        // Extract noise levels for this cluster
+                        final clusterNoiseLevels = markers.map((marker) {
+                          final point = marker.point;
+                          final key = _markerNoiseLevels.keys.firstWhere(
+                            (k) => k.startsWith('$point.latitude_$point.longitude'),
+                            orElse: () => '',
+                          );
+                          return key.isNotEmpty ? _markerNoiseLevels[key]! : 50.0;
+                        }).toList();
+
+                        // Calculate average noise level for cluster color
+                        final avgNoise = clusterNoiseLevels.isEmpty
+                            ? 50.0
+                            : clusterNoiseLevels.reduce((a, b) => a + b) / clusterNoiseLevels.length;
+
+                        // Determine cluster color based on average noise
+                        Color clusterColor;
+                        if (avgNoise < 50) {
+                          clusterColor = AppTheme.lowNoise; // Green
+                        } else if (avgNoise < 70) {
+                          clusterColor = AppTheme.moderateNoise; // Orange
+                        } else {
+                          clusterColor = AppTheme.highNoise; // Red
+                        }
+
+                        return Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: clusterColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: Center(
+                            child: Text(
+                              markers.length.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                      
+                      // Markers to cluster
+                      markers: _cachedMarkers,
+                    ),
+                  ),
 
                 // Current location marker
                 if (!_isLoadingLocation)
