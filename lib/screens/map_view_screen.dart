@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui show Paint, Path, Offset, MaskFilter, BlurStyle, PaintingStyle, Size, Rect;
 import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
@@ -601,14 +602,25 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     MarkerClusterLayerWidget(
                       options: MarkerClusterLayerOptions(
                         // Cluster appearance
-                        maxClusterRadius: 50,        // Cluster markers within 50 pixels
+                        maxClusterRadius: 50,
+                        // Cluster markers within 50 pixels
                         size: const Size(40, 40),
                         alignment: Alignment.center,
                         padding: const EdgeInsets.all(50),
 
                         // Clustering behavior
-                        maxZoom: 17,                 // Allow clustering up to zoom 17 (street level!)
-                        disableClusteringAtZoom: 18, // Show individual markers only at zoom 18+
+                        maxZoom: 17,
+                        // Allow clustering up to zoom 17 (street level!)
+                        disableClusteringAtZoom: 18,
+                        // Show individual markers only at zoom 18+
+
+                        // Spiderfy spacing (when cluster is clicked)
+                        spiderfyCircleRadius: 75,
+                        // Try 65px - more than 55 (too close) but less than 80 (too far)
+                        spiderfySpiralDistanceMultiplier: 1,
+                        // Keep at 1 (int only, can't use decimals)
+                        circleSpiralSwitchover: 7,
+                        // Switch to spiral at 7+ markers (was 9)
 
                         // Simple cluster builder
                         builder: (context, markers) {
@@ -642,24 +654,29 @@ class _MapViewScreenState extends State<MapViewScreen> {
                             clusterColor = AppTheme.highNoise; // Red
                           }
 
-                          return Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: clusterColor,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                            ),
-                            child: Center(
-                              child: Text(
-                                markers.length.toString(),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
+                          // Make cluster visually distinct from individual markers
+                          // Use a pin/marker shape instead of circle
+                          return Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Pin shape
+                              CustomPaint(
+                                painter: ClusterPinPainter(clusterColor),
+                                size: const Size(50, 60),
+                              ),
+                              // Number centered in white circle
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(
+                                  markers.length.toString(),
+                                  style: const TextStyle(
+                                    color: Colors.black,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ),
-                            ),
+                            ],
                           );
                         },
 
@@ -1181,5 +1198,84 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (db < 50) return 'Low Noise - Safe';
     if (db < 70) return 'Moderate Noise';
     return 'High Noise - Dangerous!';
+  }
+}
+
+// Custom painter for cluster pin/marker shape
+class ClusterPinPainter extends CustomPainter {
+  final Color color;
+
+  ClusterPinPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, ui.Size size) {
+    final paint = ui.Paint()
+      ..color = color
+      ..style = ui.PaintingStyle.fill;
+
+    final borderPaint = ui.Paint()
+      ..color = Colors.white
+      ..style = ui.PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+
+    // Draw teardrop/pin shape
+    final path = ui.Path();
+    final width = size.width;
+    final height = size.height;
+
+    // Center point
+    final centerX = width / 2;
+    final centerY = height * 0.35; // Center of the bulb
+    final bulbRadius = width * 0.42;
+
+    // Draw the bulb (top circle)
+    path.addOval(
+      ui.Rect.fromCircle(
+        center: ui.Offset(centerX, centerY),
+        radius: bulbRadius,
+      ),
+    );
+
+    // Draw the pointed bottom
+    path.moveTo(centerX - bulbRadius * 0.3, centerY + bulbRadius * 0.5);
+    path.cubicTo(
+      centerX - bulbRadius * 0.5, centerY + bulbRadius * 0.8,
+      centerX - bulbRadius * 0.2, height,
+      centerX, height,
+    );
+    path.cubicTo(
+      centerX + bulbRadius * 0.2, height,
+      centerX + bulbRadius * 0.5, centerY + bulbRadius * 0.8,
+      centerX + bulbRadius * 0.3, centerY + bulbRadius * 0.5,
+    );
+
+    // Draw shadow
+    final shadowPaint = ui.Paint()
+      ..color = Colors.black.withValues(alpha: 0.3)
+      ..style = ui.PaintingStyle.fill
+      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 3);
+    
+    final shadowPath = ui.Path()..addPath(path, const ui.Offset(0, 2));
+    canvas.drawPath(shadowPath, shadowPaint);
+
+    // Draw pin
+    canvas.drawPath(path, paint);
+    canvas.drawPath(path, borderPaint);
+
+    // Draw white circle in center for number background
+    final centerCircle = ui.Paint()
+      ..color = Colors.white
+      ..style = ui.PaintingStyle.fill;
+    
+    canvas.drawCircle(
+      ui.Offset(centerX, centerY),
+      bulbRadius * 0.65,
+      centerCircle,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant ClusterPinPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
