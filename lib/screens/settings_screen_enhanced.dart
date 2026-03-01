@@ -6,6 +6,8 @@ import '../theme/app_theme.dart';
 import '../main.dart' show themeNotifier, themeColorNotifier;
 import 'login_screen.dart';
 import 'edit_profile_screen.dart';
+import 'classification_guide_screen.dart';
+import 'donation_screen.dart';
 import '../utils/theme_helper.dart';
 
 class SettingsScreenEnhanced extends StatefulWidget {
@@ -266,12 +268,38 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           // ABOUT SECTION
           _buildSectionHeader('About & Support', Icons.info),
           _buildSettingCard([
+            // DONATION BUTTON - Support This Project
+            _buildNavigationItem(
+              'Support This Project',
+              Icons.favorite,
+              () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const DonationScreen(),
+                  ),
+                );
+              },
+              subtitle: 'Help us keep this app free',
+              isDonation: true,
+            ),
             _buildNavigationItem(
               'About App',
               Icons.info_outline,
               _showAboutDialog,
             ),
-            _buildNavigationItem('Help & Tutorial', Icons.help_outline, () {}),
+            _buildNavigationItem(
+              'Sound Classification Guide',
+              Icons.help_outline,
+              () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ClassificationGuideScreen(),
+                  ),
+                );
+              },
+            ),
             _buildNavigationItem('Rate Us', Icons.star_outline, () {}),
             _buildNavigationItem(
               'Contact Support',
@@ -486,7 +514,11 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     IconData icon,
     VoidCallback onTap, {
     bool isDestructive = false,
+    String? subtitle,
+    bool isDonation = false,
   }) {
+    final isDark = ThemeHelper.isDark(context);
+    
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -495,20 +527,38 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           children: [
             Icon(
               icon,
-              color: isDestructive
+              color: isDonation
                   ? Colors.red
-                  : ThemeHelper.getPrimaryColor(context),
+                  : isDestructive
+                      ? Colors.red
+                      : ThemeHelper.getPrimaryColor(context),
               size: 20,
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: isDestructive
-                      ? Colors.red
-                      : ThemeHelper.getTextColor(context),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: isDestructive
+                          ? Colors.red
+                          : ThemeHelper.getTextColor(context),
+                      fontWeight: isDonation ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: isDark ? Colors.white70 : Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             Icon(

@@ -475,8 +475,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final int sample16 = bytes[i] | (bytes[i + 1] << 8);
       // Convert to signed value
       final int signedSample = sample16 > 32767 ? sample16 - 65536 : sample16;
-      // Normalize to [-1.0, 1.0]
-      final double normalizedSample = signedSample / 32768.0;
+      // Normalize to [-1.0, 1.0] using correct divisor (32767 is max Int16)
+      final double normalizedSample = signedSample / 32767.0;
 
       _audioBuffer.add(normalizedSample);
     }

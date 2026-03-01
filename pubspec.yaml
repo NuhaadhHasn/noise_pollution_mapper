@@ -85,6 +85,12 @@ dependencies:
 
   flutter_svg: ^2.0.10+1
 
+  # Payment/Donations
+  flutter_paypal_payment: ^1.0.0
+  webview_flutter: ^4.4.0
+  flutter_inappwebview: ^6.1.5
+  url_launcher: ^6.3.0
+
   latlong2: any
 dev_dependencies:
   flutter_test:
