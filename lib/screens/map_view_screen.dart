@@ -50,7 +50,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   // FIXED: Cache for markers to avoid rebuilding on every frame
   List<Marker> _cachedMarkers = [];
   bool _isLoadingMarkers = false;
-  
+
   // Store noise levels for cluster coloring
   final Map<String, double> _markerNoiseLevels = {};
 
@@ -128,7 +128,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
   // FIXED: Build markers from cached snapshot (extracted for reusability)
   List<Marker> _buildMarkersFromSnapshot(QuerySnapshot? snapshot) {
     List<Marker> markers = [];
-    
+
     // Clear previous noise levels
     _markerNoiseLevels.clear();
 
@@ -239,7 +239,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
     if (!forceRefresh) {
       final now = DateTime.now();
       if (_lastLocationRequestTime != null &&
-          now.difference(_lastLocationRequestTime!) < _locationRequestDebounce) {
+          now.difference(_lastLocationRequestTime!) <
+              _locationRequestDebounce) {
         AppLogger.debug('Map: Location request debounced (too soon)');
         return;
       }
@@ -293,18 +294,18 @@ class _MapViewScreenState extends State<MapViewScreen> {
   // Show native Android location settings dialog
   Future<void> _showNativeLocationDialog() async {
     if (!mounted) return;
-    
+
     AppLogger.info('Map: 🔵 Showing native location dialog...');
-    
+
     try {
       // This shows the native Android location settings dialog
       final locationSettings = LocationSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 10,
       );
-      
+
       await Geolocator.getCurrentPosition(locationSettings: locationSettings);
-      
+
       // If user enabled location and we got position, refresh location
       if (mounted) {
         AppLogger.info('Map: ✅ User enabled location, refreshing...');
@@ -549,9 +550,11 @@ class _MapViewScreenState extends State<MapViewScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = ThemeHelper.isDark(context);
-    
+
     // Status bar color: Match navbar (dark purple in dark mode, primary color in light mode)
-    final statusBarColor = isDark ? AppTheme.darkPurple : ThemeHelper.getPrimaryColor(context);
+    final statusBarColor = isDark
+        ? AppTheme.darkPurple
+        : ThemeHelper.getPrimaryColor(context);
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
@@ -560,309 +563,204 @@ class _MapViewScreenState extends State<MapViewScreen> {
         statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
       ),
       child: Scaffold(
-      backgroundColor: ThemeHelper.getBackgroundColor(context),
-      // FIXED: Pull-to-refresh instead of continuous StreamBuilder listening
-      body: RefreshIndicator(
-        onRefresh: () async {
-          AppLogger.info('Pull-to-refresh: Reloading markers...');
-          await _loadNoiseMarkers();
-        },
-        child: Stack(
-          children: [
-            // Map
-            FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _currentLocation,
-                initialZoom: 11.0,
-                minZoom: 5.0,
-                maxZoom: 18.0,
-                onPositionChanged: (position, hasGesture) {
-                  // Save position when user pans/zooms
-                  if (hasGesture) {
-                    _saveMapPosition(position.center, position.zoom);
-                  }
-                },
-              ),
-              children: [
-                // Map tiles
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName:
-                      'com.noisemapper.noise_pollution_mapper',
+        backgroundColor: ThemeHelper.getBackgroundColor(context),
+        // FIXED: Pull-to-refresh instead of continuous StreamBuilder listening
+        body: RefreshIndicator(
+          onRefresh: () async {
+            AppLogger.info('Pull-to-refresh: Reloading markers...');
+            await _loadNoiseMarkers();
+          },
+          child: Stack(
+            children: [
+              // Map
+              FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: _currentLocation,
+                  initialZoom: 11.0,
+                  minZoom: 5.0,
+                  maxZoom: 18.0,
+                  onPositionChanged: (position, hasGesture) {
+                    // Save position when user pans/zooms
+                    if (hasGesture) {
+                      _saveMapPosition(position.center, position.zoom);
+                    }
+                  },
                 ),
+                children: [
+                  // Map tiles
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName:
+                        'com.noisemapper.noise_pollution_mapper',
+                  ),
 
-                // FIXED: Noise markers with clustering (markers within 50m auto-cluster)
-                if (_cachedMarkers.isNotEmpty)
-                  MarkerClusterLayerWidget(
-                    options: MarkerClusterLayerOptions(
-                      // Cluster appearance
-                      maxClusterRadius: 45,        // Cluster markers within 45px radius
-                      size: const Size(40, 40),    // Cluster circle size
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.all(50),
-                      
-                      // Clustering behavior
-                      maxZoom: 15,                 // Cluster up to zoom 15
-                      disableClusteringAtZoom: 16, // Show individual markers at zoom 16+
-                      
-                      // Simple cluster builder
-                      builder: (context, markers) {
-                        // Extract noise levels for this cluster
-                        final clusterNoiseLevels = markers.map((marker) {
-                          final point = marker.point;
-                          final key = _markerNoiseLevels.keys.firstWhere(
-                            (k) => k.startsWith('$point.latitude_$point.longitude'),
-                            orElse: () => '',
-                          );
-                          return key.isNotEmpty ? _markerNoiseLevels[key]! : 50.0;
-                        }).toList();
+                  // FIXED: Noise markers with clustering (markers within 50m auto-cluster)
+                  if (_cachedMarkers.isNotEmpty)
+                    MarkerClusterLayerWidget(
+                      options: MarkerClusterLayerOptions(
+                        // Cluster appearance
+                        maxClusterRadius: 50,        // Cluster markers within 50 pixels
+                        size: const Size(40, 40),
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.all(50),
 
-                        // Calculate average noise level for cluster color
-                        final avgNoise = clusterNoiseLevels.isEmpty
-                            ? 50.0
-                            : clusterNoiseLevels.reduce((a, b) => a + b) / clusterNoiseLevels.length;
+                        // Clustering behavior
+                        maxZoom: 17,                 // Allow clustering up to zoom 17 (street level!)
+                        disableClusteringAtZoom: 18, // Show individual markers only at zoom 18+
 
-                        // Determine cluster color based on average noise
-                        Color clusterColor;
-                        if (avgNoise < 50) {
-                          clusterColor = AppTheme.lowNoise; // Green
-                        } else if (avgNoise < 70) {
-                          clusterColor = AppTheme.moderateNoise; // Orange
-                        } else {
-                          clusterColor = AppTheme.highNoise; // Red
-                        }
-
-                        return Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: clusterColor,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          child: Center(
-                            child: Text(
-                              markers.length.toString(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
+                        // Simple cluster builder
+                        builder: (context, markers) {
+                          // Extract noise levels for this cluster
+                          final clusterNoiseLevels = markers.map((marker) {
+                            final point = marker.point;
+                            final key = _markerNoiseLevels.keys.firstWhere(
+                              (k) => k.startsWith(
+                                '$point.latitude_$point.longitude',
                               ),
+                              orElse: () => '',
+                            );
+                            return key.isNotEmpty
+                                ? _markerNoiseLevels[key]!
+                                : 50.0;
+                          }).toList();
+
+                          // Calculate average noise level for cluster color
+                          final avgNoise = clusterNoiseLevels.isEmpty
+                              ? 50.0
+                              : clusterNoiseLevels.reduce((a, b) => a + b) /
+                                    clusterNoiseLevels.length;
+
+                          // Determine cluster color based on average noise
+                          Color clusterColor;
+                          if (avgNoise < 50) {
+                            clusterColor = AppTheme.lowNoise; // Green
+                          } else if (avgNoise < 70) {
+                            clusterColor = AppTheme.moderateNoise; // Orange
+                          } else {
+                            clusterColor = AppTheme.highNoise; // Red
+                          }
+
+                          return Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: clusterColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
                             ),
-                          ),
-                        );
-                      },
-                      
-                      // Markers to cluster
-                      markers: _cachedMarkers,
-                    ),
-                  ),
-
-                // Current location marker
-                if (!_isLoadingLocation)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _currentLocation,
-                        width: 40,
-                        height: 40,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: ThemeHelper.getPrimaryColor(context),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                          ),
-                          child: const Icon(
-                            Icons.person,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                // Searched location marker
-                if (_searchedLocation != null)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _searchedLocation!,
-                        width: 60,
-                        height: 70,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.red,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
+                            child: Center(
                               child: Text(
-                                widget.searchedLocationName ??
-                                    _mapSearchController.text,
+                                markers.length.toString(),
                                 style: const TextStyle(
                                   color: Colors.white,
-                                  fontSize: 9,
                                   fontWeight: FontWeight.bold,
+                                  fontSize: 14,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            const Icon(
-                              Icons.location_on,
-                              color: Colors.red,
-                              size: 28,
-                            ),
-                          ],
-                        ),
+                          );
+                        },
+
+                        // Markers to cluster
+                        markers: _cachedMarkers,
                       ),
-                    ],
-                  ),
-
-                // Loading indicator for markers
-                if (_isLoadingMarkers)
-                  Center(
-                    child: CircularProgressIndicator(
-                      color: ThemeHelper.getPrimaryColor(context),
                     ),
-                  ),
-              ],
-            ),
 
-            // Search bar at top with autocomplete dropdown
-            SafeArea(
-              top: true,
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Builder(
-                  builder: (context) {
-                    return Column(
-                      children: [
-                        // Search bar
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 4,
+                  // Current location marker
+                  if (!_isLoadingLocation)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _currentLocation,
+                          width: 40,
+                          height: 40,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: ThemeHelper.getPrimaryColor(context),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 3),
+                            ),
+                            child: const Icon(
+                              Icons.person,
+                              color: Colors.white,
+                              size: 20,
+                            ),
                           ),
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? ThemeHelper.getCardColor(context)
-                                : AppTheme.lightCardBackground,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(
-                                  alpha: isDark ? 0.3 : 0.1,
-                                ),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Row(
+                        ),
+                      ],
+                    ),
+
+                  // Searched location marker
+                  if (_searchedLocation != null)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _searchedLocation!,
+                          width: 60,
+                          height: 70,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
-                                Icons.search,
-                                color: isDark
-                                    ? AppTheme.textGray
-                                    : AppTheme.textLightGray,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: TextField(
-                                  controller: _mapSearchController,
-                                  textAlignVertical: TextAlignVertical.center,
-                                  style: TextStyle(
-                                    color: isDark
-                                        ? ThemeHelper.getTextColor(context)
-                                        : AppTheme.textDark,
-                                    fontSize: 16,
-                                    height: 1.2,
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  widget.searchedLocationName ??
+                                      _mapSearchController.text,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  decoration: InputDecoration(
-                                    hintText: 'Search location on map...',
-                                    hintStyle: TextStyle(
-                                      color: isDark
-                                          ? AppTheme.textGray
-                                          : AppTheme.textLightGray,
-                                      height: 1.2,
-                                    ),
-                                    border: InputBorder.none,
-                                    enabledBorder: InputBorder.none,
-                                    focusedBorder: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                    suffixIcon:
-                                        _mapSearchController.text.isNotEmpty
-                                        ? IconButton(
-                                            icon: Icon(
-                                              Icons.clear,
-                                              color: isDark
-                                                  ? AppTheme.textGray
-                                                  : AppTheme.textLightGray,
-                                            ),
-                                            onPressed: () {
-                                              _mapSearchController.clear();
-                                              setState(() {
-                                                _searchedLocation = null;
-                                                _searchResults = [];
-                                              });
-                                            },
-                                          )
-                                        : null,
-                                  ),
-                                  onSubmitted: (value) {
-                                    _searchLocationOnMap(value);
-                                  },
-                                  onChanged: (value) {
-                                    _autocompleteSearch(value);
-                                  },
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              GestureDetector(
-                                onTap: () async {
-                                  final result = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          const SearchListScreen(),
-                                    ),
-                                  );
-                                  
-                                  // If location was selected, navigate to it
-                                  if (result != null && result is Map<String, dynamic>) {
-                                    final lat = result['lat'] as double;
-                                    final lon = result['lon'] as double;
-                                    final name = result['name'] as String;
-                                    navigateToLocation(
-                                      LatLng(lat, lon),
-                                      name,
-                                    );
-                                  }
-                                },
-                                child: Icon(
-                                  Icons.history,
-                                  color: isDark
-                                      ? AppTheme.textGray
-                                      : AppTheme.textLightGray,
-                                ),
+                              const Icon(
+                                Icons.location_on,
+                                color: Colors.red,
+                                size: 28,
                               ),
                             ],
                           ),
                         ),
-                        // Autocomplete dropdown results
-                        if (_searchResults.isNotEmpty)
+                      ],
+                    ),
+
+                  // Loading indicator for markers
+                  if (_isLoadingMarkers)
+                    Center(
+                      child: CircularProgressIndicator(
+                        color: ThemeHelper.getPrimaryColor(context),
+                      ),
+                    ),
+                ],
+              ),
+
+              // Search bar at top with autocomplete dropdown
+              SafeArea(
+                top: true,
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Builder(
+                    builder: (context) {
+                      return Column(
+                        children: [
+                          // Search bar
                           Container(
-                            margin: const EdgeInsets.only(top: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: isDark
                                   ? ThemeHelper.getCardColor(context)
@@ -870,83 +768,201 @@ class _MapViewScreenState extends State<MapViewScreen> {
                               borderRadius: BorderRadius.circular(12),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.2),
-                                  blurRadius: 8,
+                                  color: Colors.black.withValues(
+                                    alpha: isDark ? 0.3 : 0.1,
+                                  ),
+                                  blurRadius: 10,
                                   offset: const Offset(0, 4),
                                 ),
                               ],
                             ),
-                            constraints: const BoxConstraints(maxHeight: 250),
-                            child: ListView.builder(
-                              shrinkWrap: true,
-                              itemCount: _searchResults.length,
-                              itemBuilder: (context, index) {
-                                final location = _searchResults[index];
-                                return ListTile(
-                                  leading: Icon(
-                                    Icons.location_on,
-                                    color: ThemeHelper.getPrimaryColor(context),
-                                  ),
-                                  title: Text(
-                                    location['name'] as String,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.search,
+                                  color: isDark
+                                      ? AppTheme.textGray
+                                      : AppTheme.textLightGray,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _mapSearchController,
+                                    textAlignVertical: TextAlignVertical.center,
                                     style: TextStyle(
-                                      color: ThemeHelper.getTextColor(context),
-                                      fontSize: 14,
+                                      color: isDark
+                                          ? ThemeHelper.getTextColor(context)
+                                          : AppTheme.textDark,
+                                      fontSize: 16,
+                                      height: 1.2,
                                     ),
-                                  ),
-                                  subtitle: Text(
-                                    '${(location['lat'] as double).toStringAsFixed(4)}, ${(location['lon'] as double).toStringAsFixed(4)}',
-                                    style: TextStyle(
-                                      color: ThemeHelper.getSecondaryTextColor(
-                                        context,
+                                    decoration: InputDecoration(
+                                      hintText: 'Search location on map...',
+                                      hintStyle: TextStyle(
+                                        color: isDark
+                                            ? AppTheme.textGray
+                                            : AppTheme.textLightGray,
+                                        height: 1.2,
                                       ),
-                                      fontSize: 12,
+                                      border: InputBorder.none,
+                                      enabledBorder: InputBorder.none,
+                                      focusedBorder: InputBorder.none,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            vertical: 12,
+                                          ),
+                                      suffixIcon:
+                                          _mapSearchController.text.isNotEmpty
+                                          ? IconButton(
+                                              icon: Icon(
+                                                Icons.clear,
+                                                color: isDark
+                                                    ? AppTheme.textGray
+                                                    : AppTheme.textLightGray,
+                                              ),
+                                              onPressed: () {
+                                                _mapSearchController.clear();
+                                                setState(() {
+                                                  _searchedLocation = null;
+                                                  _searchResults = [];
+                                                });
+                                              },
+                                            )
+                                          : null,
                                     ),
+                                    onSubmitted: (value) {
+                                      _searchLocationOnMap(value);
+                                    },
+                                    onChanged: (value) {
+                                      _autocompleteSearch(value);
+                                    },
                                   ),
-                                  onTap: () {
-                                    final newLocation = LatLng(
-                                      location['lat'] as double,
-                                      location['lon'] as double,
+                                ),
+                                GestureDetector(
+                                  onTap: () async {
+                                    final result = await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const SearchListScreen(),
+                                      ),
                                     );
-                                    setState(() {
-                                      _searchedLocation = newLocation;
-                                      _searchResults = [];
-                                      _mapSearchController.clear();
-                                    });
-                                    _mapController.move(newLocation, 13.0);
+
+                                    // If location was selected, navigate to it
+                                    if (result != null &&
+                                        result is Map<String, dynamic>) {
+                                      final lat = result['lat'] as double;
+                                      final lon = result['lon'] as double;
+                                      final name = result['name'] as String;
+                                      navigateToLocation(
+                                        LatLng(lat, lon),
+                                        name,
+                                      );
+                                    }
                                   },
-                                );
-                              },
+                                  child: Icon(
+                                    Icons.history,
+                                    color: isDark
+                                        ? AppTheme.textGray
+                                        : AppTheme.textLightGray,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                      ],
-                    );
-                  },
+                          // Autocomplete dropdown results
+                          if (_searchResults.isNotEmpty)
+                            Container(
+                              margin: const EdgeInsets.only(top: 8),
+                              decoration: BoxDecoration(
+                                color: isDark
+                                    ? ThemeHelper.getCardColor(context)
+                                    : AppTheme.lightCardBackground,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.2),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              constraints: const BoxConstraints(maxHeight: 250),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: _searchResults.length,
+                                itemBuilder: (context, index) {
+                                  final location = _searchResults[index];
+                                  return ListTile(
+                                    leading: Icon(
+                                      Icons.location_on,
+                                      color: ThemeHelper.getPrimaryColor(
+                                        context,
+                                      ),
+                                    ),
+                                    title: Text(
+                                      location['name'] as String,
+                                      style: TextStyle(
+                                        color: ThemeHelper.getTextColor(
+                                          context,
+                                        ),
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      '${(location['lat'] as double).toStringAsFixed(4)}, ${(location['lon'] as double).toStringAsFixed(4)}',
+                                      style: TextStyle(
+                                        color:
+                                            ThemeHelper.getSecondaryTextColor(
+                                              context,
+                                            ),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    onTap: () {
+                                      final newLocation = LatLng(
+                                        location['lat'] as double,
+                                        location['lon'] as double,
+                                      );
+                                      setState(() {
+                                        _searchedLocation = newLocation;
+                                        _searchResults = [];
+                                        _mapSearchController.clear();
+                                      });
+                                      _mapController.move(newLocation, 13.0);
+                                    },
+                                  );
+                                },
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
 
-            // Current location button (positioned just above navbar)
-            Positioned(
-              bottom: 50,
-              right: 16,
-              child: FloatingActionButton(
-                heroTag: 'map_location_btn',
-                backgroundColor: ThemeHelper.getPrimaryColor(context),
-                onPressed: () async {
-                  // Refresh location first (force refresh, bypass debounce)
-                  await _getCurrentLocation(forceRefresh: true);
-                  // Then move map to new location
-                  _mapController.move(_currentLocation, 13.0);
-                },
-                child: const Icon(Icons.my_location, color: Colors.white),
+              // Current location button (positioned just above navbar)
+              Positioned(
+                bottom: 50,
+                right: 16,
+                child: FloatingActionButton(
+                  heroTag: 'map_location_btn',
+                  backgroundColor: ThemeHelper.getPrimaryColor(context),
+                  onPressed: () async {
+                    // Refresh location first (force refresh, bypass debounce)
+                    await _getCurrentLocation(forceRefresh: true);
+                    // Then move map to new location
+                    _mapController.move(_currentLocation, 13.0);
+                  },
+                  child: const Icon(Icons.my_location, color: Colors.white),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+        bottomNavigationBar: null,
       ),
-      bottomNavigationBar: null,
-    ),
     );
   }
 
