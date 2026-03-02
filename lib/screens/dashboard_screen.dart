@@ -14,6 +14,7 @@ import '../utils/theme_helper.dart';
 import '../utils/shared_app_state.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
+import '../widgets/sync_status_indicator.dart';
 import 'settings_screen_enhanced.dart';
 import 'splash_screen.dart';
 import '../services/firebase_service.dart';
@@ -249,7 +250,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         ).timeout(
           const Duration(seconds: 10),
           onTimeout: () {
-            AppLogger.warning('Geocoding timed out, using coordinates');
+            AppLogger.warning('Geocoding timed out, using GPS coordinates');
             return <Placemark>[];
           },
         );
@@ -268,21 +269,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
           AppLogger.info('Location resolved: $locationName');
         } else if (mounted) {
-          // Fallback to coordinates if geocoding fails
+          // Fallback to GPS coordinates with label (not just raw coordinates)
           setState(() {
-            _locationName = '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+            _locationName = 'GPS: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
             _isLocationLoading = false;
           });
-          AppLogger.info('Using coordinates as location name');
+          AppLogger.info('Using GPS coordinates (geocoding failed)');
         }
       } catch (e) {
-        AppLogger.error('Error getting location name', e);
-        // Use coordinates as fallback
+        // Geocoding failed (likely offline) - show GPS coordinates with label
         if (mounted) {
           setState(() {
-            _locationName = '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+            _locationName = 'GPS: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
             _isLocationLoading = false;
           });
+          AppLogger.warning('Geocoding failed (offline?), using GPS coordinates: $e');
         }
       }
     } catch (e) {
@@ -592,6 +593,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         iconTheme: const IconThemeData(color: AppTheme.textWhite),
         actionsIconTheme: const IconThemeData(color: AppTheme.textWhite),
         actions: [
+          // Sync status indicator (shows online/offline and pending uploads)
+          const SyncStatusIndicator(),
           // Logout button - same color as Dashboard title
           IconButton(
             icon: const Icon(Icons.logout),

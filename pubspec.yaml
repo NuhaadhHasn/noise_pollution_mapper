@@ -91,6 +91,11 @@ dependencies:
   flutter_inappwebview: ^6.1.5
   url_launcher: ^6.3.0
 
+  # Offline Mode
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  connectivity_plus: ^6.1.0
+
   latlong2: any
 dev_dependencies:
   flutter_test:

@@ -128,7 +128,7 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
                 }
               },
               onReceivedError: (controller, request, error) {
-                final requestUrl = request.url?.toString() ?? '';
+                final requestUrl = request.url.toString();
                 AppLogger.error('PayPal error: ${error.description} (URL: $requestUrl)');
                 // Don't show error for PayPal domain errors (they're expected)
                 if (!requestUrl.contains('paypal.com')) {

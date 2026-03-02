@@ -11,6 +11,7 @@ import 'screens/splash_screen.dart';
 import 'widgets/main_app_shell.dart';
 import 'services/notification_service.dart';
 import 'services/sound_classification_service.dart';
+import 'services/sync_service.dart';
 import 'utils/app_logger.dart';
 
 // Global ValueNotifier for theme management
@@ -45,6 +46,10 @@ void main() async {
   // Initialize notifications
   await NotificationService.initialize();
   await NotificationService.requestPermission();
+
+  // Initialize Sync Service for offline mode (Phase 1: Offline Mode)
+  await SyncService().initialize();
+  AppLogger.info('[Main] SyncService initialized for offline mode');
 
   // Load saved theme preferences
   final prefs = await SharedPreferences.getInstance();

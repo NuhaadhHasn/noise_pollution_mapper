@@ -15,6 +15,7 @@ import '../services/firebase_service.dart';
 import '../services/yamnet_class_mapping.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
+import '../widgets/sync_status_indicator.dart';
 import 'search_list_screen.dart';
 
 class MapViewScreen extends StatefulWidget {
@@ -573,6 +574,13 @@ class _MapViewScreenState extends State<MapViewScreen> {
           },
           child: Stack(
             children: [
+              // Sync status indicator (top-right corner)
+              Positioned(
+                top: 40,
+                right: 10,
+                child: const SyncStatusIndicator(),
+              ),
+
               // Map
               FlutterMap(
                 mapController: _mapController,
