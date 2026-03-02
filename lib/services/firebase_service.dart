@@ -188,6 +188,35 @@ class FirebaseService {
         .snapshots();
   }
 
+  // Get user's readings with pagination (for infinite scroll)
+  Future<QuerySnapshot> getUserReadingsPaginated({
+    required String userId,
+    required int limit,
+    DocumentSnapshot? startAfter,
+  }) async {
+    Query query = _firestore
+        .collection('noise_readings')
+        .where('userId', isEqualTo: userId)
+        .orderBy('timestamp', descending: true)
+        .limit(limit);
+
+    if (startAfter != null) {
+      query = query.startAfterDocument(startAfter);
+    }
+
+    return await query.get();
+  }
+
+  // Get total count of user's readings (for "Showing X of Y" display)
+  Future<int> getUserReadingsCount(String userId) async {
+    final snapshot = await _firestore
+        .collection('noise_readings')
+        .where('userId', isEqualTo: userId)
+        .count()
+        .get();
+    return snapshot.count ?? 0;
+  }
+
   // Get readings by location (for specific city)
   Future<List<Map<String, dynamic>>> getReadingsByLocation(
     double lat,

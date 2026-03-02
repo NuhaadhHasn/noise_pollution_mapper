@@ -249,7 +249,7 @@ class SyncService {
         'isOnline': _isOnline,
         'isSyncing': _isSyncing,
         'pendingCount': getPendingCount(),
-        'lastSyncTime': getLastSyncTime(),
+        'lastSyncTime': _storage.getLastSyncTimeSync(), // Use sync version
       };
     } catch (e) {
       AppLogger.error('[SyncService] Error getting sync status', e);
@@ -279,7 +279,7 @@ class SyncService {
   bool isSyncing() => _isSyncing;
 
   /// Get last sync time
-  DateTime? getLastSyncTime() => _storage.getLastSyncTime();
+  Future<DateTime?> getLastSyncTime() async => await _storage.getLastSyncTime();
 
   /// Dispose resources
   void dispose() {

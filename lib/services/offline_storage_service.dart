@@ -99,6 +99,117 @@ class OfflineStorageService {
     return recordings;
   }
 
+  /// Get all pending sync recordings as Maps (for BackgroundSyncService)
+  Future<List<Map<String, dynamic>>> getPendingSyncRecordings() async {
+    if (!_isInitialized) {
+      AppLogger.warning('[OfflineStorage] Not initialized');
+      return [];
+    }
+
+    final pendingRecordings = <Map<String, dynamic>>[];
+    for (final key in _recordingsBox!.keys) {
+      final value = _recordingsBox!.get(key);
+      if (value is Map && !(value['isSynced'] as bool? ?? false)) {
+        // Cast Map<dynamic, dynamic> to Map<String, dynamic>
+        pendingRecordings.add(Map<String, dynamic>.from(value));
+      }
+    }
+
+    AppLogger.debug('[OfflineStorage] Getting pending sync recordings: ${pendingRecordings.length}');
+    return pendingRecordings;
+  }
+
+  /// Mark a recording as synced
+  Future<bool> markRecordingAsSynced(String recordingId) async {
+    if (!_isInitialized) {
+      AppLogger.warning('[OfflineStorage] Not initialized');
+      return false;
+    }
+
+    try {
+      final existing = _recordingsBox!.get(recordingId);
+      if (existing is Map) {
+        existing['isSynced'] = true;
+        existing['syncedAt'] = DateTime.now().toIso8601String();
+        await _recordingsBox!.put(recordingId, existing);
+        AppLogger.debug('[OfflineStorage] Marked $recordingId as synced');
+        return true;
+      }
+      return false;
+    } catch (e) {
+      AppLogger.error('[OfflineStorage] Failed to mark as synced', e);
+      return false;
+    }
+  }
+
+  /// Increment sync attempts for a recording
+  Future<bool> incrementSyncAttempts(String recordingId) async {
+    if (!_isInitialized) {
+      AppLogger.warning('[OfflineStorage] Not initialized');
+      return false;
+    }
+
+    try {
+      final existing = _recordingsBox!.get(recordingId);
+      if (existing is Map) {
+        final currentAttempts = existing['syncAttempts'] as int? ?? 0;
+        existing['syncAttempts'] = currentAttempts + 1;
+        existing['lastSyncAttempt'] = DateTime.now().toIso8601String();
+        await _recordingsBox!.put(recordingId, existing);
+        AppLogger.debug('[OfflineStorage] Incremented sync attempts for $recordingId: ${currentAttempts + 1}');
+        return true;
+      }
+      return false;
+    } catch (e) {
+      AppLogger.error('[OfflineStorage] Failed to increment sync attempts', e);
+      return false;
+    }
+  }
+
+  /// Get count of pending sync recordings
+  Future<int> getPendingSyncCount() async {
+    if (!_isInitialized) {
+      AppLogger.warning('[OfflineStorage] Not initialized');
+      return 0;
+    }
+
+    int count = 0;
+    for (final key in _recordingsBox!.keys) {
+      final value = _recordingsBox!.get(key);
+      if (value is Map && !(value['isSynced'] as bool? ?? false)) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  /// Get last sync time (async version for BackgroundSyncService)
+  Future<DateTime?> getLastSyncTime() async {
+    if (!_isInitialized) {
+      return null;
+    }
+
+    final syncStatus = _syncStatusBox!.get('last_sync_time');
+    if (syncStatus is DateTime) {
+      return syncStatus;
+    }
+    return null;
+  }
+
+  /// Get last sync time (sync version for SyncService)
+  DateTime? getLastSyncTimeSync() {
+    if (!_isInitialized) {
+      return null;
+    }
+
+    final syncStatus = _syncStatusBox!.get('last_sync_time');
+    if (syncStatus is DateTime) {
+      return syncStatus;
+    }
+    return null;
+  }
+
   /// Get all offline recordings (including synced)
   List<OfflineRecording> getAllOfflineRecordings() {
     if (!_isInitialized) {
@@ -263,13 +374,6 @@ class OfflineStorageService {
   dynamic getSyncStatus(String key) {
     if (!_isInitialized) return null;
     return _syncStatusBox!.get(key);
-  }
-
-  /// Get last sync timestamp
-  DateTime? getLastSyncTime() {
-    final timestamp = getSyncStatus('last_sync_time');
-    if (timestamp is DateTime) return timestamp;
-    return null;
   }
 
   /// Save last sync timestamp

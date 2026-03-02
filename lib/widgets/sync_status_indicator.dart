@@ -145,11 +145,11 @@ class _SyncStatusIndicatorState extends State<SyncStatusIndicator> {
     );
   }
 
-  void _showSyncStatusDialog(BuildContext context) {
+  Future<void> _showSyncStatusDialog(BuildContext context) async {
     final isOnline = _syncStatus['isOnline'] as bool? ?? false;
     final isSyncing = _syncStatus['isSyncing'] as bool? ?? false;
     final pendingCount = _syncStatus['pendingCount'] as int? ?? 0;
-    final lastSyncTime = _syncStatus['lastSyncTime'] as DateTime?;
+    final lastSyncTime = _syncStatus['lastSyncTime'] as DateTime?; // Already sync now
 
     showDialog(
       context: context,
