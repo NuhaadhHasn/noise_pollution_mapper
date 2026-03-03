@@ -171,11 +171,11 @@ class FirebaseService {
   }
 
   // Get all noise readings ONCE (for map view) - FIXED: No continuous listening
-  Future<QuerySnapshot> getNoiseReadingsOnce() async {
+  Future<QuerySnapshot> getNoiseReadingsOnce({int limit = 100}) async {
     return await _firestore
         .collection('noise_readings')
         .orderBy('timestamp', descending: true)
-        .limit(100) // Last 100 readings
+        .limit(limit)
         .get();
   }
 

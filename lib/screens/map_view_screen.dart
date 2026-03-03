@@ -7,7 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'dart:math' as math show pi, log, cos, tan, sin, asin, sqrt, pow;
+import 'dart:math' as math show pi, cos, sin, asin, sqrt;
 import 'dart:ui' as ui show Paint, Path, Offset, MaskFilter, BlurStyle, PaintingStyle, Size, Rect;
 import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
@@ -38,6 +38,9 @@ class MapViewScreen extends StatefulWidget {
 }
 
 class _MapViewScreenState extends State<MapViewScreen> {
+  // ── Change this one value to control how many readings markers + heatmap load ──
+  static const int _kMapReadingLimit = 100;
+
   final MapController _mapController = MapController();
   final FirebaseService _firebaseService = FirebaseService();
   final HeatmapService _heatmapService = HeatmapService();
@@ -63,10 +66,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
   // Heatmap state variables
   bool _showHeatmap = false;
   List<HeatmapPoint> _heatmapPoints = [];
-  bool _isLoadingHeatmap = false;
   final double _heatmapOpacity = 0.7;
-  double _currentZoom = 11.0;
-  LatLng _mapViewCenter = const LatLng(6.9271, 79.8612);
+
+  // Incremented on bare-map tap to collapse any open cluster spiderfy
+  int _clusterRebuildKey = 0;
 
   @override
   void initState() {
@@ -93,9 +96,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         _getCurrentLocation();
       });
     }
-    // Load markers and heatmap data once on startup
+    // Load markers once on startup (heatmap reuses the same snapshot)
     _loadNoiseMarkers();
-    _loadHeatmapData();
   }
 
   @override
@@ -115,25 +117,35 @@ class _MapViewScreenState extends State<MapViewScreen> {
     _mapSearchController.text = locationName;
   }
 
-  // FIXED: Load noise markers once (not continuous stream)
+  // Load markers AND heatmap points from the same single Firestore query.
+  // Both always show identical data. To change the limit, update _kMapReadingLimit above.
   Future<void> _loadNoiseMarkers() async {
-    if (_isLoadingMarkers) return; // Prevent duplicate loads
+    if (_isLoadingMarkers) return;
 
     setState(() {
       _isLoadingMarkers = true;
     });
 
     try {
-      final snapshot = await _firebaseService.getNoiseReadingsOnce();
+      final snapshot = await _firebaseService.getNoiseReadingsOnce(
+        limit: _kMapReadingLimit,
+      );
       final markers = _buildMarkersFromSnapshot(snapshot);
+      final heatmapPoints = _heatmapService.convertToHeatmapPoints(snapshot);
+
       if (mounted) {
         setState(() {
           _cachedMarkers = markers;
+          _heatmapPoints = heatmapPoints;
           _isLoadingMarkers = false;
         });
+        AppLogger.info(
+          '[Map] Loaded ${markers.length} markers + ${heatmapPoints.length} '
+          'heatmap points (limit: $_kMapReadingLimit)',
+        );
       }
     } catch (e) {
-      AppLogger.error('Error loading noise markers', e);
+      AppLogger.error('Error loading map data', e);
       if (mounted) {
         setState(() {
           _isLoadingMarkers = false;
@@ -142,41 +154,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
     }
   }
 
-  // Load heatmap data from Firebase
-  Future<void> _loadHeatmapData() async {
-    if (_isLoadingHeatmap) return;
-
-    setState(() {
-      _isLoadingHeatmap = true;
-    });
-
-    try {
-      final snapshot = await _firebaseService.getNoiseReadingsForHeatmap(limit: 500);
-      final points = _heatmapService.convertToHeatmapPoints(snapshot);
-
-      if (mounted) {
-        setState(() {
-          _heatmapPoints = points;
-          _isLoadingHeatmap = false;
-        });
-        AppLogger.info('[Map] Loaded ${points.length} heatmap points');
-      }
-    } catch (e) {
-      AppLogger.error('Error loading heatmap data', e);
-      if (mounted) {
-        setState(() {
-          _isLoadingHeatmap = false;
-        });
-      }
-    }
-  }
-
-  // Refresh both markers and heatmap (for pull-to-refresh)
+  // Refresh both markers and heatmap (single query, for pull-to-refresh)
   Future<void> _refreshAllData() async {
-    await Future.wait([
-      _loadNoiseMarkers(),
-      if (_showHeatmap) _loadHeatmapData(),
-    ]);
+    await _loadNoiseMarkers();
   }
 
   // FIXED: Build markers from cached snapshot (extracted for reusability)
@@ -641,21 +621,20 @@ class _MapViewScreenState extends State<MapViewScreen> {
                   initialZoom: 11.0,
                   minZoom: 5.0,
                   maxZoom: 18.0,
+                  onTap: (tapPosition, latLng) {
+                    // Collapse any open cluster spiderfy when user taps bare map
+                    setState(() {
+                      _clusterRebuildKey++;
+                    });
+                  },
                   onPositionChanged: (position, hasGesture) {
-                    // Save position when user pans/zooms
                     if (hasGesture) {
                       _saveMapPosition(position.center, position.zoom);
-                    }
-                    if (mounted) {
-                      setState(() {
-                        _mapViewCenter = position.center;
-                        _currentZoom = position.zoom;
-                      });
                     }
                   },
                 ),
                 children: [
-                  // Map tiles
+                  // 1) Map tiles (bottom)
                   TileLayer(
                     urlTemplate:
                         'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -663,9 +642,18 @@ class _MapViewScreenState extends State<MapViewScreen> {
                         'com.noisemapper.noise_pollution_mapper',
                   ),
 
-                  // FIXED: Noise markers with clustering (markers within 50m auto-cluster)
+                  // 2) Heatmap layer — above tiles, below markers
+                  //    Uses MapCamera.of(context) for pixel-perfect alignment
+                  if (_showHeatmap && _heatmapPoints.isNotEmpty)
+                    HeatmapLayer(
+                      heatmapPoints: _heatmapPoints,
+                      opacity: _heatmapOpacity,
+                    ),
+
+                  // 3) Noise markers with clustering (on top of heatmap)
                   if (_cachedMarkers.isNotEmpty)
                     MarkerClusterLayerWidget(
+                      key: ValueKey(_clusterRebuildKey),
                       options: MarkerClusterLayerOptions(
                         // Cluster appearance
                         maxClusterRadius: 50,
@@ -851,22 +839,6 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     ),
                 ],
               ),
-
-              // Heatmap overlay (above map tiles, below FABs, non-interactive)
-              if (_showHeatmap && _heatmapPoints.isNotEmpty)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: HeatmapPainter(
-                        heatmapPoints: _heatmapPoints,
-                        opacity: _heatmapOpacity,
-                        mapCenter: _mapViewCenter,
-                        zoom: _currentZoom,
-                        mapSize: MediaQuery.of(context).size,
-                      ),
-                    ),
-                  ),
-                ),
 
               // Search bar at top with autocomplete dropdown
               SafeArea(
@@ -1400,127 +1372,101 @@ class ClusterPinPainter extends CustomPainter {
   }
 }
 
-/// Custom painter for heatmap visualization
-class HeatmapPainter extends CustomPainter {
+/// Flutter-map layer widget that uses MapCamera.of(context) for pixel-perfect
+/// heatmap alignment — the same camera and projection that TileLayer uses.
+class HeatmapLayer extends StatelessWidget {
   final List<HeatmapPoint> heatmapPoints;
   final double opacity;
-  final LatLng mapCenter;
-  final double zoom;
-  final Size mapSize;
 
-  HeatmapPainter({
+  const HeatmapLayer({
+    super.key,
     required this.heatmapPoints,
     required this.opacity,
-    required this.mapCenter,
-    required this.zoom,
-    required this.mapSize,
   });
 
   @override
-  void paint(Canvas canvas, Size size) {
-    // Create gradient colors
-    final gradientColors = <double, Color>{
-      0.0: const Color(0xFF4CAF50), // Green: Quiet (<50dB)
-      0.4: const Color(0xFFFFEB3B), // Yellow: Moderate (~50-70dB)
-      0.6: const Color(0xFFFF9800), // Orange: Loud (~70-85dB)
-      1.0: const Color(0xFFF44336), // Red: Very loud (>85dB)
-    };
+  Widget build(BuildContext context) {
+    final camera = MapCamera.of(context);
 
-    // Draw each heatmap point with gradient
+    // camera.nonRotatedSize is the actual pixel dimensions of the map viewport.
+    // We compute absolute screen positions here (from top-left = 0,0) so the
+    // painter never needs to know about the canvas size.
+    final centerWorld = camera.project(camera.center);
+    final halfW = camera.nonRotatedSize.x / 2;
+    final halfH = camera.nonRotatedSize.y / 2;
+
+    final screenPoints = <(Offset, double)>[];
     for (final point in heatmapPoints) {
-      // Convert intensity to color
-      final color = _getColorForIntensity(point.intensity, gradientColors);
-      
-      // Create gradient paint with blur
+      final worldPt = camera.project(LatLng(point.latitude, point.longitude));
+      screenPoints.add((
+        Offset(
+          halfW + (worldPt.x - centerWorld.x),
+          halfH + (worldPt.y - centerWorld.y),
+        ),
+        point.intensity,
+      ));
+    }
+
+    // SizedBox.expand() is required — without it, CustomPaint gets Size.zero
+    // from the FlutterMap Stack's loose constraints, misplacing all blobs.
+    return SizedBox.expand(
+      child: CustomPaint(
+        painter: HeatmapPainter(screenPoints: screenPoints, opacity: opacity),
+      ),
+    );
+  }
+}
+
+/// Draws pre-projected heatmap points onto the canvas.
+/// screenPoints are ABSOLUTE pixel positions from the viewport top-left (0, 0).
+class HeatmapPainter extends CustomPainter {
+  final List<(Offset, double)> screenPoints; // (absolute screen pos, intensity)
+  final double opacity;
+
+  const HeatmapPainter({required this.screenPoints, required this.opacity});
+
+  static final _gradientColors = <double, Color>{
+    0.0: const Color(0xFF4CAF50), // Green  — quiet   (<50 dB)
+    0.4: const Color(0xFFFFEB3B), // Yellow — moderate (~50–70 dB)
+    0.6: const Color(0xFFFF9800), // Orange — loud     (~70–85 dB)
+    1.0: const Color(0xFFF44336), // Red    — very loud (>85 dB)
+  };
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final (screenPos, intensity) in screenPoints) {
+      // Skip points outside the visible area (with a small margin for blur)
+      if (screenPos.dx < -60 || screenPos.dx > size.width + 60 ||
+          screenPos.dy < -60 || screenPos.dy > size.height + 60) {
+        continue;
+      }
+
+      final color = _colorForIntensity(intensity);
       final paint = Paint()
-        ..color = color.withValues(alpha: opacity * 0.4 * point.intensity)
+        ..color = color.withValues(
+            alpha: (opacity * (0.35 + 0.55 * intensity)).clamp(0.0, 0.9))
         ..style = PaintingStyle.fill
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20);
 
-      // Convert lat/lng to screen position using Web Mercator projection
-      final screenPoint = _latLngToScreen(
-        point.latitude, 
-        point.longitude, 
-        mapCenter.latitude, 
-        mapCenter.longitude, 
-        zoom, 
-        size,
-      );
-      
-      // Skip points outside visible area
-      if (screenPoint == null) continue;
-
-      // Draw point with size based on intensity
-      final radius = 30.0 * (0.5 + point.intensity);
-      canvas.drawCircle(screenPoint, radius, paint);
+      canvas.drawCircle(screenPos, 30.0 * (0.5 + intensity), paint);
     }
   }
 
-  /// Convert lat/lng to screen coordinates
-  Offset? _latLngToScreen(
-    double lat,
-    double lng,
-    double centerLat,
-    double centerLng,
-    double zoom,
-    Size size,
-  ) {
-    // Web Mercator projection
-    final worldSize = math.pow(2.0, zoom) * 256.0;
-    
-    // Convert lat/lng to world coordinates
-    final latRad = lat * math.pi / 180.0;
-    final mercatorN = math.log(math.tan(latRad) + 1.0 / math.cos(latRad));
-    final x = (lng + 180.0) / 360.0 * worldSize;
-    final y = (1.0 - mercatorN / math.pi) / 2.0 * worldSize;
-    
-    // Convert center lat/lng to world coordinates
-    final centerLatRad = centerLat * math.pi / 180.0;
-    final centerMercatorN = math.log(math.tan(centerLatRad) + 1.0 / math.cos(centerLatRad));
-    final centerX = (centerLng + 180.0) / 360.0 * worldSize;
-    final centerY = (1.0 - centerMercatorN / math.pi) / 2.0 * worldSize;
-    
-    // Calculate screen position relative to center
-    final screenX = size.width / 2.0 + (x - centerX);
-    final screenY = size.height / 2.0 + (y - centerY);
-    
-    // Return null if outside visible area (with margin)
-    if (screenX < -50 || screenX > size.width + 50 ||
-        screenY < -50 || screenY > size.height + 50) {
-      return null;
-    }
-    
-    return Offset(screenX, screenY);
-  }
-
-  /// Get color for intensity value using gradient
-  Color _getColorForIntensity(
-    double intensity,
-    Map<double, Color> gradientColors,
-  ) {
-    final keys = gradientColors.keys.toList()..sort();
-    
-    // Find the two colors to interpolate between
+  Color _colorForIntensity(double intensity) {
+    final keys = _gradientColors.keys.toList()..sort();
     for (int i = 0; i < keys.length - 1; i++) {
-      final lowerKey = keys[i];
-      final upperKey = keys[i + 1];
-      
-      if (intensity >= lowerKey && intensity <= upperKey) {
-        final t = (intensity - lowerKey) / (upperKey - lowerKey);
-        return Color.lerp(gradientColors[lowerKey]!, gradientColors[upperKey]!, t)!;
+      if (intensity >= keys[i] && intensity <= keys[i + 1]) {
+        final t = (intensity - keys[i]) / (keys[i + 1] - keys[i]);
+        return Color.lerp(_gradientColors[keys[i]]!, _gradientColors[keys[i + 1]]!, t)!;
       }
     }
-    
-    // Return edge colors if outside range
-    if (intensity < keys.first) return gradientColors[keys.first]!;
-    return gradientColors[keys.last]!;
+    if (intensity < keys.first) {
+      return _gradientColors[keys.first]!;
+    }
+    return _gradientColors[keys.last]!;
   }
 
   @override
-  bool shouldRepaint(covariant HeatmapPainter oldDelegate) {
-    return oldDelegate.opacity != opacity || 
-           oldDelegate.heatmapPoints.length != heatmapPoints.length ||
-           oldDelegate.mapCenter != mapCenter ||
-           oldDelegate.zoom != zoom;
-  }
+  bool shouldRepaint(covariant HeatmapPainter old) =>
+      old.opacity != opacity || old.screenPoints.length != screenPoints.length;
 }
