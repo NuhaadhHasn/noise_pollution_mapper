@@ -99,6 +99,9 @@ dependencies:
   # Image Compression
   flutter_image_compress: ^2.1.0
 
+  # Heatmap Visualization
+  flutter_map_heatmap: ^0.0.1
+
   latlong2: any
 dev_dependencies:
   flutter_test:

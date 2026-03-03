@@ -179,6 +179,28 @@ class FirebaseService {
         .get();
   }
 
+  // Get all noise readings for heatmap (with optional date range)
+  Future<QuerySnapshot> getNoiseReadingsForHeatmap({
+    DateTime? startTime,
+    DateTime? endTime,
+    int limit = 500, // Limit for performance
+  }) async {
+    Query query = _firestore
+        .collection('noise_readings')
+        .orderBy('timestamp', descending: true)
+        .limit(limit);
+
+    // Add time filters if provided
+    if (startTime != null) {
+      query = query.where('timestamp', isGreaterThan: Timestamp.fromDate(startTime));
+    }
+    if (endTime != null) {
+      query = query.where('timestamp', isLessThan: Timestamp.fromDate(endTime));
+    }
+
+    return await query.get();
+  }
+
   // Get user's readings (for analytics)
   Stream<QuerySnapshot> getUserReadings(String userId) {
     return _firestore

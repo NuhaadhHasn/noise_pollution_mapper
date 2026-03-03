@@ -7,15 +7,18 @@ import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'dart:math' as math;
+import 'dart:math' as math show pi, log, cos, tan, sin, asin, sqrt, pow;
 import 'dart:ui' as ui show Paint, Path, Offset, MaskFilter, BlurStyle, PaintingStyle, Size, Rect;
 import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
 import '../services/yamnet_class_mapping.dart';
+import '../services/heatmap_service.dart';
+import '../models/heatmap_point.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
 import '../widgets/sync_status_indicator.dart';
+import '../widgets/heatmap_fab.dart';
 import 'search_list_screen.dart';
 
 class MapViewScreen extends StatefulWidget {
@@ -37,6 +40,7 @@ class MapViewScreen extends StatefulWidget {
 class _MapViewScreenState extends State<MapViewScreen> {
   final MapController _mapController = MapController();
   final FirebaseService _firebaseService = FirebaseService();
+  final HeatmapService _heatmapService = HeatmapService();
   final TextEditingController _mapSearchController = TextEditingController();
 
   LatLng _currentLocation = const LatLng(
@@ -55,6 +59,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
   // Store noise levels for cluster coloring
   final Map<String, double> _markerNoiseLevels = {};
+
+  // Heatmap state variables
+  bool _showHeatmap = false;
+  List<HeatmapPoint> _heatmapPoints = [];
+  bool _isLoadingHeatmap = false;
+  final double _heatmapOpacity = 0.7;
+  double _currentZoom = 11.0;
+  LatLng _mapViewCenter = const LatLng(6.9271, 79.8612);
 
   @override
   void initState() {
@@ -76,11 +88,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
       });
     } else {
       _loadSavedMapPosition(); // Load last map position
-      // Don't auto-request location on startup (Dashboard handles it)
-      // Location will be requested when user clicks FAB or navigates
+      // Request current location after loading saved position
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _getCurrentLocation();
+      });
     }
-    // Load markers once on startup
+    // Load markers and heatmap data once on startup
     _loadNoiseMarkers();
+    _loadHeatmapData();
   }
 
   @override
@@ -125,6 +140,43 @@ class _MapViewScreenState extends State<MapViewScreen> {
         });
       }
     }
+  }
+
+  // Load heatmap data from Firebase
+  Future<void> _loadHeatmapData() async {
+    if (_isLoadingHeatmap) return;
+
+    setState(() {
+      _isLoadingHeatmap = true;
+    });
+
+    try {
+      final snapshot = await _firebaseService.getNoiseReadingsForHeatmap(limit: 500);
+      final points = _heatmapService.convertToHeatmapPoints(snapshot);
+
+      if (mounted) {
+        setState(() {
+          _heatmapPoints = points;
+          _isLoadingHeatmap = false;
+        });
+        AppLogger.info('[Map] Loaded ${points.length} heatmap points');
+      }
+    } catch (e) {
+      AppLogger.error('Error loading heatmap data', e);
+      if (mounted) {
+        setState(() {
+          _isLoadingHeatmap = false;
+        });
+      }
+    }
+  }
+
+  // Refresh both markers and heatmap (for pull-to-refresh)
+  Future<void> _refreshAllData() async {
+    await Future.wait([
+      _loadNoiseMarkers(),
+      if (_showHeatmap) _loadHeatmapData(),
+    ]);
   }
 
   // FIXED: Build markers from cached snapshot (extracted for reusability)
@@ -569,8 +621,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         // FIXED: Pull-to-refresh instead of continuous StreamBuilder listening
         body: RefreshIndicator(
           onRefresh: () async {
-            AppLogger.info('Pull-to-refresh: Reloading markers...');
-            await _loadNoiseMarkers();
+            AppLogger.info('Pull-to-refresh: Reloading markers and heatmap...');
+            await _refreshAllData();
           },
           child: Stack(
             children: [
@@ -593,6 +645,12 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     // Save position when user pans/zooms
                     if (hasGesture) {
                       _saveMapPosition(position.center, position.zoom);
+                    }
+                    if (mounted) {
+                      setState(() {
+                        _mapViewCenter = position.center;
+                        _currentZoom = position.zoom;
+                      });
                     }
                   },
                 ),
@@ -722,6 +780,30 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     MarkerLayer(
                       markers: [
                         Marker(
+                          point: _currentLocation,
+                          width: 40,
+                          height: 40,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: ThemeHelper.getPrimaryColor(context),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 3),
+                            ),
+                            child: const Icon(
+                              Icons.person,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                  // Searched location marker
+                  if (_searchedLocation != null)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
                           point: _searchedLocation!,
                           width: 60,
                           height: 70,
@@ -769,6 +851,22 @@ class _MapViewScreenState extends State<MapViewScreen> {
                     ),
                 ],
               ),
+
+              // Heatmap overlay (above map tiles, below FABs, non-interactive)
+              if (_showHeatmap && _heatmapPoints.isNotEmpty)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: HeatmapPainter(
+                        heatmapPoints: _heatmapPoints,
+                        opacity: _heatmapOpacity,
+                        mapCenter: _mapViewCenter,
+                        zoom: _currentZoom,
+                        mapSize: MediaQuery.of(context).size,
+                      ),
+                    ),
+                  ),
+                ),
 
               // Search bar at top with autocomplete dropdown
               SafeArea(
@@ -969,18 +1067,32 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
               // Current location button (positioned just above navbar)
               Positioned(
-                bottom: 50,
+                bottom: 16,
                 right: 16,
-                child: FloatingActionButton(
-                  heroTag: 'map_location_btn',
-                  backgroundColor: ThemeHelper.getPrimaryColor(context),
-                  onPressed: () async {
-                    // Refresh location first (force refresh, bypass debounce)
-                    await _getCurrentLocation(forceRefresh: true);
-                    // Then move map to new location
-                    _mapController.move(_currentLocation, 13.0);
-                  },
-                  child: const Icon(Icons.my_location, color: Colors.white),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Heatmap FAB (toggles heatmap on/off)
+                    HeatmapFab(
+                      showHeatmap: _showHeatmap,
+                      onTap: () {
+                        setState(() {
+                          _showHeatmap = !_showHeatmap;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    // Location button
+                    FloatingActionButton(
+                      heroTag: 'map_location_btn',
+                      backgroundColor: ThemeHelper.getPrimaryColor(context),
+                      onPressed: () async {
+                        await _getCurrentLocation(forceRefresh: true);
+                        _mapController.move(_currentLocation, 13.0);
+                      },
+                      child: const Icon(Icons.my_location, color: Colors.white),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1285,5 +1397,130 @@ class ClusterPinPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant ClusterPinPainter oldDelegate) {
     return oldDelegate.color != color;
+  }
+}
+
+/// Custom painter for heatmap visualization
+class HeatmapPainter extends CustomPainter {
+  final List<HeatmapPoint> heatmapPoints;
+  final double opacity;
+  final LatLng mapCenter;
+  final double zoom;
+  final Size mapSize;
+
+  HeatmapPainter({
+    required this.heatmapPoints,
+    required this.opacity,
+    required this.mapCenter,
+    required this.zoom,
+    required this.mapSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Create gradient colors
+    final gradientColors = <double, Color>{
+      0.0: const Color(0xFF4CAF50), // Green: Quiet (<50dB)
+      0.4: const Color(0xFFFFEB3B), // Yellow: Moderate (~50-70dB)
+      0.6: const Color(0xFFFF9800), // Orange: Loud (~70-85dB)
+      1.0: const Color(0xFFF44336), // Red: Very loud (>85dB)
+    };
+
+    // Draw each heatmap point with gradient
+    for (final point in heatmapPoints) {
+      // Convert intensity to color
+      final color = _getColorForIntensity(point.intensity, gradientColors);
+      
+      // Create gradient paint with blur
+      final paint = Paint()
+        ..color = color.withValues(alpha: opacity * 0.4 * point.intensity)
+        ..style = PaintingStyle.fill
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20);
+
+      // Convert lat/lng to screen position using Web Mercator projection
+      final screenPoint = _latLngToScreen(
+        point.latitude, 
+        point.longitude, 
+        mapCenter.latitude, 
+        mapCenter.longitude, 
+        zoom, 
+        size,
+      );
+      
+      // Skip points outside visible area
+      if (screenPoint == null) continue;
+
+      // Draw point with size based on intensity
+      final radius = 30.0 * (0.5 + point.intensity);
+      canvas.drawCircle(screenPoint, radius, paint);
+    }
+  }
+
+  /// Convert lat/lng to screen coordinates
+  Offset? _latLngToScreen(
+    double lat,
+    double lng,
+    double centerLat,
+    double centerLng,
+    double zoom,
+    Size size,
+  ) {
+    // Web Mercator projection
+    final worldSize = math.pow(2.0, zoom) * 256.0;
+    
+    // Convert lat/lng to world coordinates
+    final latRad = lat * math.pi / 180.0;
+    final mercatorN = math.log(math.tan(latRad) + 1.0 / math.cos(latRad));
+    final x = (lng + 180.0) / 360.0 * worldSize;
+    final y = (1.0 - mercatorN / math.pi) / 2.0 * worldSize;
+    
+    // Convert center lat/lng to world coordinates
+    final centerLatRad = centerLat * math.pi / 180.0;
+    final centerMercatorN = math.log(math.tan(centerLatRad) + 1.0 / math.cos(centerLatRad));
+    final centerX = (centerLng + 180.0) / 360.0 * worldSize;
+    final centerY = (1.0 - centerMercatorN / math.pi) / 2.0 * worldSize;
+    
+    // Calculate screen position relative to center
+    final screenX = size.width / 2.0 + (x - centerX);
+    final screenY = size.height / 2.0 + (y - centerY);
+    
+    // Return null if outside visible area (with margin)
+    if (screenX < -50 || screenX > size.width + 50 ||
+        screenY < -50 || screenY > size.height + 50) {
+      return null;
+    }
+    
+    return Offset(screenX, screenY);
+  }
+
+  /// Get color for intensity value using gradient
+  Color _getColorForIntensity(
+    double intensity,
+    Map<double, Color> gradientColors,
+  ) {
+    final keys = gradientColors.keys.toList()..sort();
+    
+    // Find the two colors to interpolate between
+    for (int i = 0; i < keys.length - 1; i++) {
+      final lowerKey = keys[i];
+      final upperKey = keys[i + 1];
+      
+      if (intensity >= lowerKey && intensity <= upperKey) {
+        final t = (intensity - lowerKey) / (upperKey - lowerKey);
+        return Color.lerp(gradientColors[lowerKey]!, gradientColors[upperKey]!, t)!;
+      }
+    }
+    
+    // Return edge colors if outside range
+    if (intensity < keys.first) return gradientColors[keys.first]!;
+    return gradientColors[keys.last]!;
+  }
+
+  @override
+  bool shouldRepaint(covariant HeatmapPainter oldDelegate) {
+    return oldDelegate.opacity != opacity || 
+           oldDelegate.heatmapPoints.length != heatmapPoints.length ||
+           oldDelegate.mapCenter != mapCenter ||
+           oldDelegate.zoom != zoom;
   }
 }
