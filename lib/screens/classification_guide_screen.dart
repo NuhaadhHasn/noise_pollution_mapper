@@ -4,8 +4,8 @@ import '../models/category_guide_data.dart';
 import '../widgets/classification_guide_widget.dart';
 
 /// Sound Classification Guide Screen
-/// 
-/// Displays an interactive guide showing all 10 sound categories
+///
+/// Displays an interactive guide showing all 17 sound categories
 /// with examples, descriptions, and YAMNet mapping information.
 class ClassificationGuideScreen extends StatelessWidget {
   const ClassificationGuideScreen({super.key});
@@ -109,7 +109,7 @@ class ClassificationGuideScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '10 Categories',
+                      '17 Categories',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.8),
                         fontSize: 14,
@@ -155,7 +155,7 @@ class ClassificationGuideScreen extends StatelessWidget {
               _buildInfoChip(
                 context,
                 Icons.category,
-                '10 Categories',
+                '17 Categories',
                 Colors.white.withValues(alpha: 0.2),
               ),
             ],

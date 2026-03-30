@@ -83,6 +83,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   
   // Track if location dialog already shown APP-WIDE (prevent duplicate dialogs across screens)
   // Using SharedAppState for cross-screen communication
+  
+  // Track disposal state to prevent setState after dispose
+  bool _isDisposed = false;
 
   @override
   void initState() {
@@ -357,61 +360,93 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // Start noise measurement
   void _startRecording() async {
     try {
+      // CRITICAL: Check if already recording - prevent duplicate starts
+      if (_isRecording) {
+        AppLogger.warning('Already recording, ignoring start request');
+        return;
+      }
+
+      // CRITICAL: Check if audio recorder is already running
+      if (_audioRecorder != null && _audioRecorder!.isRecording) {
+        AppLogger.warning('Audio recorder already running, stopping first...');
+        _stopRecording(); // Don't await - it's void
+        // Small delay to ensure clean state
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
       // Location already fetched on screen start, no need to request again
 
       // Start noise meter for dB readings
       _noiseMeter = NoiseMeter();
-      _noiseSubscription = _noiseMeter?.noise.listen((NoiseReading reading) {
-        setState(() {
-          // Apply calibration offset for phone microphone
-          // Phone mics read 10-20 dB higher than actual SPL
-          // This offset adjusts readings to realistic environmental values:
-          // - Quiet room: 30-40 dB (was showing 10-20 dB)
-          // - Normal conversation: 60-70 dB (was showing 30-50 dB)
-          // - Loud speech: 80-90 dB (was showing 50-60 dB)
-          // - Traffic: 70-85 dB
-          const double calibrationOffset = 10.0;
-          _currentDb = (reading.meanDecibel - calibrationOffset).clamp(
-            0.0,
-            120.0,
-          ); // Clamp to valid range
-
-          // Add to history (only valid values)
-          if (_currentDb.isFinite && _currentDb > 0) {
-            _dbHistory.add(_currentDb);
-            if (_dbHistory.length > 100) {
-              _dbHistory.removeAt(0); // Keep last 100 readings
+      _noiseSubscription = _noiseMeter?.noise.listen(
+        (NoiseReading reading) {
+          if (!_isRecording || !mounted) return;
+          
+          setState(() {
+            // Apply calibration offset for phone microphone
+            // Phone mics read 10-20 dB higher than actual SPL
+            // This offset adjusts readings to realistic environmental values:
+            // - Quiet room: 30-40 dB (was showing 10-20 dB)
+            // - Normal conversation: 60-70 dB (was showing 30-50 dB)
+            // - Loud speech: 80-90 dB (was showing 50-60 dB)
+            // - Traffic: 70-85 dB
+            const double calibrationOffset = 10.0;
+            final rawDb = reading.meanDecibel - calibrationOffset;
+            
+            // Validate dB range (filter unrealistic values)
+            // Environmental sounds typically range from 20-120 dB
+            if (rawDb < 10 || rawDb > 130) {
+              AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
+              return; // Don't add invalid readings
             }
+            
+            _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
 
-            // Update min, max, and average
-            if (_currentDb > _maxDb) _maxDb = _currentDb;
+            // Add to history (only valid values)
+            if (_currentDb.isFinite && _currentDb > 0) {
+              _dbHistory.add(_currentDb);
+              if (_dbHistory.length > 100) {
+                _dbHistory.removeAt(0); // Keep last 100 readings
+              }
 
-            // Set minDb to first reading if still infinity
-            if (_minDb == double.infinity) {
-              _minDb = _currentDb;
-            } else if (_currentDb < _minDb) {
-              _minDb = _currentDb;
+              // Update min, max, and average
+              if (_currentDb > _maxDb) _maxDb = _currentDb;
+
+              // Set minDb to first reading if still infinity
+              if (_minDb == double.infinity) {
+                _minDb = _currentDb;
+              } else if (_currentDb < _minDb) {
+                _minDb = _currentDb;
+              }
+
+              // Calculate average from history
+              if (_dbHistory.isNotEmpty) {
+                _avgDb = _dbHistory.reduce((a, b) => a + b) / _dbHistory.length;
+              }
+
+              // Check for high noise and show notification
+              if (_currentDb > 70 && !_hasShownHighNoiseAlert) {
+                NotificationService.showHighNoiseAlert(_currentDb);
+                _hasShownHighNoiseAlert =
+                    true; // Only alert once per recording session
+              }
+
+              // Reset alert flag if noise drops below threshold
+              if (_currentDb < 65) {
+                _hasShownHighNoiseAlert = false;
+              }
             }
-
-            // Calculate average from history
-            if (_dbHistory.isNotEmpty) {
-              _avgDb = _dbHistory.reduce((a, b) => a + b) / _dbHistory.length;
-            }
-
-            // Check for high noise and show notification
-            if (_currentDb > 70 && !_hasShownHighNoiseAlert) {
-              NotificationService.showHighNoiseAlert(_currentDb);
-              _hasShownHighNoiseAlert =
-                  true; // Only alert once per recording session
-            }
-
-            // Reset alert flag if noise drops below threshold
-            if (_currentDb < 65) {
-              _hasShownHighNoiseAlert = false;
-            }
-          }
-        });
-      });
+          });
+        },
+        onError: (error) {
+          AppLogger.error('Noise meter stream error', error);
+          // Don't cancel on error - let stream recover
+        },
+        onDone: () {
+          AppLogger.debug('Noise meter stream closed');
+        },
+        cancelOnError: false,
+      );
 
       // Start audio recorder for sound classification
       if (_audioRecorder != null && !_audioRecorder!.isRecording) {
@@ -419,11 +454,19 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
         // Create stream controller to receive audio data
         _audioStreamController = StreamController<Uint8List>();
-        _audioStreamSubscription = _audioStreamController!.stream.listen((
-          buffer,
-        ) {
-          _processAudioData(buffer);
-        });
+        _audioStreamSubscription = _audioStreamController!.stream.listen(
+          (buffer) {
+            if (!_isRecording) return;
+            _processAudioData(buffer);
+          },
+          onError: (error) {
+            AppLogger.error('Audio stream error', error);
+          },
+          onDone: () {
+            AppLogger.debug('Audio stream closed');
+          },
+          cancelOnError: false,
+        );
 
         // Start recording with stream output
         await _audioRecorder!.startRecorder(
@@ -442,6 +485,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
       // Start periodic Firebase saves (every 5 seconds)
       _saveTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+        // CRITICAL: Stop if not recording (prevents timer leak)
+        if (!_isRecording || !mounted) return;
+        
         if (_currentDb > 0 && _currentDb.isFinite) {
           _firebaseService.saveNoiseReading(
             decibelLevel: _currentDb,
@@ -461,6 +507,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _classificationTimer = Timer.periodic(const Duration(seconds: 5), (
         timer,
       ) {
+        // CRITICAL: Stop if not recording (prevents timer leak)
+        if (!_isRecording || !mounted) return;
+        
         _performSoundClassification();
       });
     } catch (e) {
@@ -498,23 +547,40 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     _saveTimer?.cancel();
     _classificationTimer?.cancel();
 
-    // Stop audio recorder
+    // Stop audio recorder with timeout (CRITICAL FIX - prevents hanging)
     if (_audioRecorder != null && _audioRecorder!.isRecording) {
-      await _audioRecorder!.stopRecorder();
-      AppLogger.debug('Stopped audio capture');
+      try {
+        await _audioRecorder!.stopRecorder().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            AppLogger.warning('⚠️ stopRecorder() timed out, forcing state reset');
+            return; // Explicit return to satisfy nullable return type
+          },
+        );
+        AppLogger.debug('Stopped audio capture');
+      } catch (e) {
+        AppLogger.error('Failed to stop audio recorder', e);
+        // Continue anyway - force state reset
+      }
     }
 
     // Close stream controller
-    await _audioStreamController?.close();
+    try {
+      await _audioStreamController?.close();
+    } catch (e) {
+      AppLogger.error('Failed to close audio stream controller', e);
+    }
     _audioStreamController = null;
 
     _audioBuffer.clear();
 
-    if (mounted) {
+    // Always reset state, even if recorder failed to stop
+    if (mounted && !_isDisposed) {
       setState(() {
         _isRecording = false;
         _currentClassification = null; // Clear classification when stopped
       });
+      AppLogger.info('Recording stopped, state reset complete');
     }
   }
 
@@ -523,28 +589,44 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   /// Uses real audio samples captured from the device microphone
   /// Buffers 0.975 seconds of audio (15600 samples at 16kHz) for YAMNet classification
   Future<void> _performSoundClassification() async {
-    if (_isClassifying || !_classificationService.isInitialized) {
+    if (_isClassifying || !_classificationService.isInitialized || _isDisposed) {
       return;
     }
 
     // Check if we have enough audio samples
     if (_audioBuffer.length < _requiredSamples) {
-      AppLogger.debug(
-        'Waiting for audio buffer... (${_audioBuffer.length}/$_requiredSamples samples)',
-      );
-      return;
+      // If we have at least 50% of samples, pad with zeros and classify anyway
+      if (_audioBuffer.length >= _requiredSamples * 0.5) {
+        AppLogger.debug('Buffer has ${((_audioBuffer.length / _requiredSamples) * 100).toStringAsFixed(0)}% of samples, padding and classifying...');
+      } else {
+        AppLogger.debug(
+          'Waiting for audio buffer... (${_audioBuffer.length}/$_requiredSamples samples)',
+        );
+        return;
+      }
     }
 
+    if (!mounted || _isDisposed) return;
     setState(() {
       _isClassifying = true;
     });
 
     try {
-      // Extract the most recent 15600 samples from the buffer
-      final audioSamples = _audioBuffer.sublist(
-        _audioBuffer.length - _requiredSamples,
-        _audioBuffer.length,
-      );
+      // Extract the most recent samples (or use all if less than required)
+      List<double> audioSamples;
+      if (_audioBuffer.length >= _requiredSamples) {
+        audioSamples = _audioBuffer.sublist(
+          _audioBuffer.length - _requiredSamples,
+          _audioBuffer.length,
+        );
+      } else {
+        // Use available samples + pad with zeros
+        audioSamples = List<double>.from(_audioBuffer);
+        audioSamples.addAll(
+          List<double>.filled(_requiredSamples - _audioBuffer.length, 0.0),
+        );
+        AppLogger.warning('Classifying with padded audio (${audioSamples.length} samples)');
+      }
 
       AppLogger.debug('Classifying ${audioSamples.length} real audio samples...');
 
@@ -554,7 +636,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         _targetSampleRate,
       );
 
-      if (result != null && mounted) {
+      if (result != null && mounted && !_isDisposed) {
         setState(() {
           _currentClassification = result;
         });
@@ -566,7 +648,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     } catch (e) {
       AppLogger.error('Error during classification', e);
     } finally {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         setState(() {
           _isClassifying = false;
         });
@@ -576,6 +658,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   @override
   void dispose() {
+    _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _stopRecording();
     _audioRecorder?.closeRecorder();

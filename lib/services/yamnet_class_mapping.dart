@@ -402,13 +402,7 @@ class YAMNetClassMapping {
     346: 'Scrape',
     347: 'Rub',
 
-    // Sports and recreation
-    374: 'Gym',
-    375: 'Weight lifting',
-    376: 'Exercise',
-    377: 'Aerobics',
-    378: 'Yoga',
-    379: 'Stretching',
+    // Missing environmental sounds (380-390)
     380: 'Running',
     381: 'Jogging',
     382: 'Treadmill',
@@ -417,8 +411,24 @@ class YAMNetClassMapping {
     385: 'Pool (game)',
     386: 'Swimming',
     387: 'Diving',
+
+    // CRITICAL MISSING CLASSES (420-430) - Environmental/Background sounds
+    420: 'Environmental noise',
+    421: 'Room tone',
+    422: 'Ambient noise',
+    423: 'Noise floor',
+    424: 'Reverberation',
+    425: 'Echo',
+    426: 'Acoustic environment',
+    427: 'Soundscapes',
+    428: 'Atmospheric sounds',
+    429: 'Environmental ambient',
+    430: 'Background ambient',
+
+    // Sports and recreation (continued)
     481: 'Water polo',
     482: 'Playground',
+    483: 'Recreation',
     484: 'Stadium',
     485: 'Sports crowd',
     486: 'Audience',
@@ -439,6 +449,19 @@ class YAMNetClassMapping {
     501: 'Boxing',
     502: 'Wrestling',
     503: 'Fencing',
+
+    // CRITICAL MISSING CLASSES (470-480) - Weather and nature sounds
+    470: 'Natural sounds',
+    471: 'Outdoor ambient',
+    472: 'Forest ambience',
+    473: 'Field recording',
+    474: 'Environmental recording',
+    475: 'Location sound',
+    476: 'Field ambient',
+    477: 'Nature ambience',
+    478: 'Outdoor soundscape',
+    479: 'Environmental sound effects',
+    480: 'Nature sounds',
 
     // Office and technology
     504: 'Printer',
@@ -760,6 +783,32 @@ class YAMNetClassMapping {
     'Auto rickshaw': categoryTuktuk,
     'Go-kart': categoryTuktuk,
 
+    // Environmental/Background sounds (NEW - from logs)
+    'Environmental noise': categoryOther,
+    'Room tone': categoryOther,
+    'Ambient noise': categoryOther,
+    'Noise floor': categoryOther,
+    'Reverberation': categoryOther,
+    'Echo': categoryOther,
+    'Acoustic environment': categoryOther,
+    'Soundscapes': categoryNature,
+    'Atmospheric sounds': categoryWeather,
+    'Environmental ambient': categoryNature,
+    'Background ambient': categoryOther,
+    
+    // Nature/Weather ambient (NEW - from logs)
+    'Natural sounds': categoryNature,
+    'Outdoor ambient': categoryNature,
+    'Forest ambience': categoryNature,
+    'Field recording': categoryNature,
+    'Environmental recording': categoryNature,
+    'Location sound': categoryNature,
+    'Field ambient': categoryNature,
+    'Nature ambience': categoryNature,
+    'Outdoor soundscape': categoryNature,
+    'Environmental sound effects': categoryNature,
+    'Nature sounds': categoryNature,
+
     // Nature / Ambient
     'Bird': categoryNature,
     'Bird vocalization, bird call, bird song': categoryNature,
@@ -910,7 +959,6 @@ class YAMNetClassMapping {
 
     // Other / Ambient
     'Silence': categoryOther,
-    'Background noise': categoryOther,
     'White noise': categoryOther,
     'Pink noise': categoryOther,
     'Static': categoryOther,

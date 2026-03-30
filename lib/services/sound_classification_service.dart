@@ -1,6 +1,5 @@
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'yamnet_class_mapping.dart';
-import 'dart:math' as math;
 import '../utils/app_logger.dart';
 
 /// Sound Classification Service using YAMNet TensorFlow Lite model
@@ -27,10 +26,12 @@ class SoundClassificationService {
   static const int numClasses = 521; // YAMNet outputs 521 classes
 
   /// Confidence threshold for classification
-  /// Lowered to 30% for better real-world detection
-  /// Music and environmental sounds often have lower confidence scores
-  /// Can be adjusted based on testing results
-  static const double confidenceThreshold = 0.30;
+  /// Lowered to 15% for real-world environmental sound detection
+  /// Environmental sounds often have 10-25% confidence due to:
+  /// - Overlapping sounds (traffic + wind + birds)
+  /// - Phone microphone quality limitations
+  /// - Non-stationary nature of environmental sounds
+  static const double confidenceThreshold = 0.15;
 
   /// Classification frequency - every 5 seconds (matches Firebase save frequency)
   static const int classificationIntervalSeconds = 5;
@@ -111,15 +112,25 @@ class SoundClassificationService {
       final maxIndex = _getMaxIndex(scores);
       final confidence = scores[maxIndex];
 
-      // Get YAMNet class name for logging
-      final yamnetClassName = 'YAMNet_Class_$maxIndex';
+      // Get actual YAMNet class name from mapping (CRITICAL FIX)
+      final yamnetClassName = YAMNetClassMapping.indexToClassName[maxIndex] ?? 'Unknown_Class_$maxIndex';
+      
+      // DEBUG: Log top 3 predictions for debugging
+      final sortedIndices = List<int>.generate(scores.length, (i) => i);
+      sortedIndices.sort((a, b) => scores[b].compareTo(scores[a]));
+      AppLogger.debug('🎵 YAMNet Top 3: #$maxIndex=$yamnetClassName (${(scores[maxIndex] * 100).toStringAsFixed(1)}%), '
+          '#${sortedIndices[1]} (${(scores[sortedIndices[1]] * 100).toStringAsFixed(1)}%), '
+          '#${sortedIndices[2]} (${(scores[sortedIndices[2]] * 100).toStringAsFixed(1)}%)');
 
       // Step 6: Check confidence threshold
       if (confidence < confidenceThreshold) {
         AppLogger.debug('Low confidence: ${(confidence * 100).toStringAsFixed(1)}% for $yamnetClassName (threshold: ${(confidenceThreshold * 100).toStringAsFixed(0)}%)');
+        // Map to category even for low confidence
+        final lowConfCategory = YAMNetClassMapping.getCategoryFromClassName(yamnetClassName);
+        final lowConfSoundType = YAMNetClassMapping.getSoundType(lowConfCategory);
         return ClassificationResult(
-          category: YAMNetClassMapping.categoryOther,
-          soundType: YAMNetClassMapping.typeAmbient,
+          category: lowConfCategory,
+          soundType: lowConfSoundType,
           confidence: confidence,
           yamnetClass: yamnetClassName,
           yamnetClassIndex: maxIndex,
@@ -129,8 +140,8 @@ class SoundClassificationService {
       // Step 7: Map YAMNet class to our category
       final category = YAMNetClassMapping.getCategoryFromClassName(yamnetClassName);
       final soundType = YAMNetClassMapping.getSoundType(category);
-
-      AppLogger.info('Classified: $category (${(confidence * 100).toStringAsFixed(1)}%)');
+      
+      AppLogger.info('✅ Classified: $category (${(confidence * 100).toStringAsFixed(1)}%) - YAMNet: $yamnetClassName (Class #$maxIndex)');
 
       return ClassificationResult(
         category: category,
@@ -208,45 +219,26 @@ class SoundClassificationService {
   }
 
   /// Normalize audio to [-1.0, 1.0] range
-  /// Improved normalization to preserve signal characteristics
+  /// Simple peak normalization - preserves original signal dynamics for YAMNet
   List<double> _normalizeAudio(List<double> audio) {
     if (audio.isEmpty) return audio;
 
-    // Calculate RMS (Root Mean Square) for better signal preservation
-    double sumSquares = 0;
+    // Find the maximum absolute value (peak normalization)
+    double maxAbs = 0;
     for (final sample in audio) {
-      sumSquares += sample * sample;
-    }
-    final rms = math.sqrt(sumSquares / audio.length);
-
-    // If signal is too weak, use peak normalization instead
-    if (rms < 0.01) {
-      // Find min and max values
-      double minVal = audio.reduce(math.min);
-      double maxVal = audio.reduce(math.max);
-
-      // Calculate the maximum absolute value
-      final maxAbs = math.max(minVal.abs(), maxVal.abs());
-
-      if (maxAbs == 0) {
-        // All zeros, return as is
-        return audio;
+      final absVal = sample.abs();
+      if (absVal > maxAbs) {
+        maxAbs = absVal;
       }
-
-      // Normalize to [-1, 1]
-      return audio.map((sample) => sample / maxAbs).toList();
     }
 
-    // RMS normalization - preserves signal dynamics better for ML
-    // Target RMS of 0.1 (10% of max) for good feature extraction
-    final targetRMS = 0.1;
-    final scaleFactor = targetRMS / rms;
+    if (maxAbs == 0) {
+      // All zeros, return as is
+      return audio;
+    }
 
-    // Apply scaling and clamp to [-1, 1] to prevent clipping
-    return audio.map((sample) {
-      final scaled = sample * scaleFactor;
-      return scaled.clamp(-1.0, 1.0);
-    }).toList();
+    // Normalize to [-1, 1] using peak value
+    return audio.map((sample) => sample / maxAbs).toList();
   }
 
   /// Get the index of the maximum value in a list
