@@ -91,9 +91,10 @@ class _MapViewScreenState extends State<MapViewScreen> {
       });
     } else {
       _loadSavedMapPosition(); // Load last map position
-      // Request current location after loading saved position
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _getCurrentLocation();
+      // DON'T auto-request location here - Dashboard already requested permission on app startup
+      // User can tap location FAB button to get current location if needed
+      setState(() {
+        _isLoadingLocation = false;
       });
     }
     // Load markers once on startup (heatmap reuses the same snapshot)
