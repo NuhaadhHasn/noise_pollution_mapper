@@ -574,16 +574,19 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
 
   // Theme color picker dialog
   void _showThemeColorPicker() {
+    // Capture brightness before showing dialog to avoid context issues
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Theme.of(context).brightness == Brightness.dark
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: isDark
             ? AppTheme.cardBackground
             : AppTheme.lightCardBackground,
         title: Text(
           'Choose Theme Color',
           style: TextStyle(
-            color: Theme.of(context).brightness == Brightness.dark
+            color: isDark
                 ? AppTheme.textWhite
                 : AppTheme.textDark,
           ),
@@ -592,14 +595,14 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           spacing: 16,
           runSpacing: 16,
           children: AppTheme.themeColors.entries.map((entry) {
-            return _buildColorOption(entry.value, entry.key);
+            return _buildColorOption(entry.value, entry.key, isDark);
           }).toList(),
         ),
       ),
     );
   }
 
-  Widget _buildColorOption(Color color, String name) {
+  Widget _buildColorOption(Color color, String name, bool isDark) {
     // Check if this is the currently selected color
     final isSelected = themeColorNotifier.value.toARGB32() == color.toARGB32();
 
@@ -658,7 +661,7 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           Text(
             name,
             style: TextStyle(
-              color: Theme.of(context).brightness == Brightness.dark
+              color: isDark
                   ? (isSelected ? AppTheme.textWhite : AppTheme.textGray)
                   : (isSelected ? AppTheme.textDark : AppTheme.textLightGray),
               fontSize: 11,
