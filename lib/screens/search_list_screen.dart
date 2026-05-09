@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:geocoding/geocoding.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
 import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
 import '../utils/app_logger.dart';
-import 'map_view_screen.dart';
-import 'package:latlong2/latlong.dart';
 
 class SearchListScreen extends StatefulWidget {
   const SearchListScreen({super.key});
@@ -22,10 +21,10 @@ class _SearchListScreenState extends State<SearchListScreen> {
   String _searchQuery = '';
   String _sortBy = 'noise'; // 'noise' or 'name'
 
-  // Geocoding search results
-  List<Location> _geocodingResults = [];
-  bool _isSearchingGeocode = false;
-  String? _geocodeError;
+  // Nominatim API search results
+  List<Map<String, dynamic>> _nominatimResults = [];
+  bool _isSearching = false;
+  String? _searchError;
 
   @override
   void dispose() {
@@ -33,39 +32,67 @@ class _SearchListScreenState extends State<SearchListScreen> {
     super.dispose();
   }
 
-  // Search for any city worldwide using geocoding
-  Future<void> _searchCityGlobally(String cityName) async {
-    if (cityName.trim().isEmpty || cityName.trim().length < 3) {
+  // Search using Nominatim API (OpenStreetMap)
+  Future<void> _searchWithNominatim(String query) async {
+    if (query.trim().isEmpty || query.trim().length < 2) {
       setState(() {
-        _geocodingResults = [];
-        _geocodeError = null;
+        _nominatimResults = [];
+        _searchError = null;
       });
       return;
     }
 
     setState(() {
-      _isSearchingGeocode = true;
-      _geocodeError = null;
+      _isSearching = true;
+      _searchError = null;
     });
 
     try {
-      AppLogger.info('Searching globally for: $cityName');
-      final locations = await locationFromAddress(cityName);
+      AppLogger.info('Nominatim search for: $query');
 
-      if (mounted) {
-        setState(() {
-          _geocodingResults = locations;
-          _isSearchingGeocode = false;
-        });
-        AppLogger.info('Found ${locations.length} location(s) for: $cityName');
+      // Use Nominatim API with 50 results limit
+      // Bias towards Sri Lanka but include worldwide results
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/search?format=json&q=$query&limit=50&addressdetails=1',
+      );
+
+      final response = await http.get(
+        url,
+        headers: {'User-Agent': 'NoiseMapper/1.0'},
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+
+        if (mounted) {
+          setState(() {
+            _nominatimResults = data
+                .map(
+                  (item) => {
+                    'name': item['display_name'] ?? 'Unknown',
+                    'lat': double.parse(item['lat']),
+                    'lon': double.parse(item['lon']),
+                    'type': item['type'] ?? 'place',
+                    'importance': item['importance'] ?? 0.5,
+                  },
+                )
+                .toList();
+            _isSearching = false;
+          });
+          AppLogger.info(
+            'Found ${_nominatimResults.length} results for: $query',
+          );
+        }
+      } else {
+        throw Exception('API returned status ${response.statusCode}');
       }
     } catch (e) {
-      AppLogger.error('Geocoding search failed', e);
+      AppLogger.error('Nominatim search failed', e);
       if (mounted) {
         setState(() {
-          _geocodingResults = [];
-          _isSearchingGeocode = false;
-          _geocodeError = 'No locations found for "$cityName"';
+          _nominatimResults = [];
+          _isSearching = false;
+          _searchError = 'Search failed. Please try again.';
         });
       }
     }
@@ -78,13 +105,14 @@ class _SearchListScreenState extends State<SearchListScreen> {
       appBar: AppBar(
         title: Text('Search Cities'),
         leading: IconButton(
-          icon: Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
         actions: [
-          // Sort menu
+          // Sort menu - white icon to match AppBar
           PopupMenuButton<String>(
-            icon: Icon(Icons.sort),
+            icon: const Icon(Icons.sort, color: AppTheme.textWhite),
             onSelected: (value) {
               setState(() {
                 _sortBy = value;
@@ -95,179 +123,202 @@ class _SearchListScreenState extends State<SearchListScreen> {
                 value: 'noise',
                 child: Text('Sort by Noise Level'),
               ),
-              const PopupMenuItem(
-                value: 'name',
-                child: Text('Sort by Name'),
-              ),
+              const PopupMenuItem(value: 'name', child: Text('Sort by Name')),
             ],
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: TextField(
-              controller: _searchController,
-              style: TextStyle(color: ThemeHelper.getTextColor(context)),
-              decoration: InputDecoration(
-                hintText: 'Enter cities...',
-                hintStyle: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
-                prefixIcon: Icon(Icons.search, color: ThemeHelper.getSecondaryTextColor(context)),
-                filled: true,
-                fillColor: ThemeHelper.getCardColor(context),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value.toLowerCase();
-                });
-                // Trigger global search after user stops typing (debounce)
-                Future.delayed(const Duration(milliseconds: 500), () {
-                  if (value == _searchQuery) {
-                    _searchCityGlobally(value);
-                  }
-                });
-              },
-              onSubmitted: (value) {
-                // Immediate search on submit
-                _searchCityGlobally(value);
-              },
-            ),
-          ),
-
-          // Global Search Results Section (shows when user searches)
-          if (_searchQuery.isNotEmpty && _searchQuery.length >= 3)
-            _buildGlobalSearchSection(),
-
-          // Section Header
-          if (_searchQuery.isNotEmpty && _searchQuery.length >= 3)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text(
-                'Cities with Recordings',
-                style: TextStyle(
-                  color: ThemeHelper.getTextColor(context),
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-
-          // City grid (recorded cities)
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _firebaseService.getNoiseReadings(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(
-                    child: CircularProgressIndicator(color: ThemeHelper.getPrimaryColor(context)),
-                  );
-                }
-
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'No data available',
-                      style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
-                    ),
-                  );
-                }
-
-                // Group readings by city and calculate averages
-                final cityData = _processCityData(snapshot.data!.docs);
-
-                // Filter by search query (improved partial matching)
-                final filteredCities = cityData.entries.where((entry) {
-                  final cityName = entry.key.toLowerCase();
-                  final query = _searchQuery.toLowerCase();
-                  // Match if city name contains query or query contains city name
-                  return cityName.contains(query) || query.contains(cityName);
-                }).toList();
-
-                // Show helpful message if no cities found
-                if (filteredCities.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          _searchQuery.isEmpty ? Icons.location_off : Icons.search_off,
-                          size: 64,
-                          color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.5),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _searchQuery.isEmpty
-                              ? 'No cities with valid data'
-                              : 'No cities match "$_searchQuery"',
-                          style: TextStyle(
-                            color: ThemeHelper.getTextColor(context),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _searchQuery.isEmpty
-                              ? 'Start recording in different locations\nto build city data'
-                              : 'Try a different search term',
-                          style: TextStyle(
-                            color: ThemeHelper.getSecondaryTextColor(context),
-                            fontSize: 14,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                // Sort
-                if (_sortBy == 'noise') {
-                  filteredCities.sort((a, b) => b.value['avgDb'].compareTo(a.value['avgDb']));
-                } else {
-                  filteredCities.sort((a, b) => a.key.compareTo(b.key));
-                }
-
-                return GridView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    childAspectRatio: 1.2,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                  ),
-                  itemCount: filteredCities.length,
-                  itemBuilder: (context, index) {
-                    final cityName = filteredCities[index].key;
-                    final data = filteredCities[index].value;
-
-                    return _buildCityCard(
-                      cityName,
-                      data['avgDb'],
-                      data['count'],
-                      data['maxDb'],
+          // LAYER 1 (BOTTOM): Full-screen city grid — visible only when not searching
+          if (_searchQuery.isEmpty)
+            Positioned.fill(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: _firebaseService.getNoiseReadings(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return Center(
+                      child: CircularProgressIndicator(
+                        color: ThemeHelper.getPrimaryColor(context),
+                      ),
                     );
-                  },
-                );
-              },
+                  }
+
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    return Center(
+                      child: Text(
+                        'No data available',
+                        style: TextStyle(
+                          color: ThemeHelper.getSecondaryTextColor(context),
+                        ),
+                      ),
+                    );
+                  }
+
+                  final cityData = _processCityData(snapshot.data!.docs);
+                  final filteredCities = cityData.entries.toList();
+
+                  if (filteredCities.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.location_off,
+                            size: 64,
+                            color: ThemeHelper.getSecondaryTextColor(
+                              context,
+                            ).withValues(alpha: 0.5),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No cities with valid data',
+                            style: TextStyle(
+                              color: ThemeHelper.getTextColor(context),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Start recording in different locations\nto build city data',
+                            style: TextStyle(
+                              color: ThemeHelper.getSecondaryTextColor(context),
+                              fontSize: 14,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  if (_sortBy == 'noise') {
+                    filteredCities.sort(
+                      (a, b) => b.value['avgDb'].compareTo(a.value['avgDb']),
+                    );
+                  } else {
+                    filteredCities.sort((a, b) => a.key.compareTo(b.key));
+                  }
+
+                  return GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 96, 16, 16),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      childAspectRatio: 1.2,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                    ),
+                    itemCount: filteredCities.length,
+                    itemBuilder: (context, index) {
+                      final cityName = filteredCities[index].key;
+                      final data = filteredCities[index].value;
+                      return _buildCityCard(
+                        cityName,
+                        data['avgDb'],
+                        data['count'],
+                        data['maxDb'],
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+
+          // Tap-to-dismiss overlay — catches taps outside the search overlay
+          if (_searchQuery.isNotEmpty)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => FocusScope.of(context).unfocus(),
+                behavior: HitTestBehavior.opaque,
+                child: const SizedBox.expand(),
+              ),
+            ),
+
+          // LAYER 2 (TOP): Search bar + results overlay
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Search bar (always visible)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: TextField(
+                    controller: _searchController,
+                    style: TextStyle(color: ThemeHelper.getTextColor(context)),
+                    decoration: InputDecoration(
+                      hintText: 'Enter cities...',
+                      hintStyle: TextStyle(
+                        color: ThemeHelper.getSecondaryTextColor(context),
+                      ),
+                      prefixIcon: Icon(
+                        Icons.search,
+                        color: ThemeHelper.getSecondaryTextColor(context),
+                      ),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: Icon(
+                                Icons.clear,
+                                color: ThemeHelper.getSecondaryTextColor(
+                                  context,
+                                ),
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _searchQuery = '';
+                                  _searchController.clear();
+                                  _nominatimResults.clear();
+                                });
+                              },
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: ThemeHelper.getCardColor(context),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value.toLowerCase();
+                      });
+                      Future.delayed(const Duration(milliseconds: 500), () {
+                        if (value == _searchQuery) {
+                          _searchWithNominatim(value);
+                        }
+                      });
+                    },
+                    onSubmitted: (value) {
+                      _searchWithNominatim(value);
+                    },
+                  ),
+                ),
+
+                // Search results (visible when query has 3+ chars)
+                if (_searchQuery.isNotEmpty && _searchQuery.length >= 3)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.5,
+                    ),
+                    child: _buildGlobalSearchSection(),
+                  ),
+              ],
             ),
           ),
         ],
       ),
-      bottomNavigationBar: _buildBottomNavBar(),
     );
   }
 
   // Build global search results section
   Widget _buildGlobalSearchSection() {
-    if (_isSearchingGeocode) {
+    if (_isSearching) {
       return Container(
         padding: const EdgeInsets.all(24),
         child: Row(
@@ -294,7 +345,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
       );
     }
 
-    if (_geocodeError != null) {
+    if (_searchError != null) {
       return Container(
         margin: const EdgeInsets.all(16),
         padding: const EdgeInsets.all(16),
@@ -309,7 +360,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                _geocodeError!,
+                _searchError!,
                 style: TextStyle(color: Colors.orange[300], fontSize: 14),
               ),
             ),
@@ -318,7 +369,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
       );
     }
 
-    if (_geocodingResults.isNotEmpty) {
+    if (_nominatimResults.isNotEmpty) {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Column(
@@ -328,17 +379,22 @@ class _SearchListScreenState extends State<SearchListScreen> {
               'Search Results (Tap to view on map)',
               style: TextStyle(
                 color: ThemeHelper.getTextColor(context),
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 12),
-            ...List.generate(_geocodingResults.length, (index) {
-              final location = _geocodingResults[index];
-              return _buildGlobalSearchResultCard(location, index);
-            }),
             const SizedBox(height: 8),
-            Divider(color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3)),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                physics: const ClampingScrollPhysics(),
+                itemCount: _nominatimResults.length,
+                itemBuilder: (context, index) {
+                  final result = _nominatimResults[index];
+                  return _buildGlobalSearchResultCard(result, index);
+                },
+              ),
+            ),
           ],
         ),
       );
@@ -348,7 +404,24 @@ class _SearchListScreenState extends State<SearchListScreen> {
   }
 
   // Build individual global search result card
-  Widget _buildGlobalSearchResultCard(Location location, int index) {
+  Widget _buildGlobalSearchResultCard(Map<String, dynamic> result, int index) {
+    final name = result['name'] as String;
+    final lat = result['lat'] as double;
+    final lon = result['lon'] as double;
+    final type = result['type'] as String;
+
+    // Get icon based on place type
+    IconData typeIcon = Icons.location_on;
+    if (type == 'city' || type == 'town' || type == 'village') {
+      typeIcon = Icons.location_city;
+    } else if (type == 'road' || type == 'street') {
+      typeIcon = Icons.route;
+    } else if (type == 'park' || type == 'forest') {
+      typeIcon = Icons.park;
+    } else if (type == 'water' || type == 'river' || type == 'lake') {
+      typeIcon = Icons.water;
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       color: ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.1),
@@ -367,24 +440,26 @@ class _SearchListScreenState extends State<SearchListScreen> {
             shape: BoxShape.circle,
           ),
           child: Icon(
-            Icons.location_on,
+            typeIcon,
             color: ThemeHelper.getPrimaryColor(context),
             size: 24,
           ),
         ),
         title: Text(
-          _searchQuery.trim(),
+          name.split(',').take(2).join(', '), // Show first 2 parts of name
           style: TextStyle(
             color: ThemeHelper.getTextColor(context),
             fontWeight: FontWeight.w600,
-            fontSize: 16,
+            fontSize: 14,
           ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-          'Lat: ${location.latitude.toStringAsFixed(4)}, Lng: ${location.longitude.toStringAsFixed(4)}',
+          '${lat.toStringAsFixed(3)}, ${lon.toStringAsFixed(3)}',
           style: TextStyle(
             color: ThemeHelper.getSecondaryTextColor(context),
-            fontSize: 12,
+            fontSize: 11,
           ),
         ),
         trailing: Icon(
@@ -393,16 +468,12 @@ class _SearchListScreenState extends State<SearchListScreen> {
           size: 16,
         ),
         onTap: () {
-          // Navigate to map at this location
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => MapViewScreen(
-                initialLocation: LatLng(location.latitude, location.longitude),
-                searchedLocationName: _searchQuery.trim(),
-              ),
-            ),
-          );
+          // Return the selected location to the Map screen
+          Navigator.pop(context, {
+            'lat': lat,
+            'lon': lon,
+            'name': name.split(',').first,
+          });
         },
       ),
     );
@@ -410,7 +481,9 @@ class _SearchListScreenState extends State<SearchListScreen> {
 
   // Process city data - group by location and calculate averages
   // Improved with filtering and normalization
-  Map<String, Map<String, dynamic>> _processCityData(List<QueryDocumentSnapshot> docs) {
+  Map<String, Map<String, dynamic>> _processCityData(
+    List<QueryDocumentSnapshot> docs,
+  ) {
     final Map<String, List<double>> cityReadings = {};
 
     for (var doc in docs) {
@@ -447,11 +520,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
         final avg = readings.reduce((a, b) => a + b) / readings.length;
         final max = readings.reduce((a, b) => a > b ? a : b);
 
-        result[city] = {
-          'avgDb': avg,
-          'maxDb': max,
-          'count': readings.length,
-        };
+        result[city] = {'avgDb': avg, 'maxDb': max, 'count': readings.length};
       }
     });
 
@@ -479,14 +548,22 @@ class _SearchListScreenState extends State<SearchListScreen> {
     }
 
     // Capitalize first letter of each word for consistency
-    return city.split(' ').map((word) {
-      if (word.isEmpty) return word;
-      return word[0].toUpperCase() + word.substring(1).toLowerCase();
-    }).join(' ');
+    return city
+        .split(' ')
+        .map((word) {
+          if (word.isEmpty) return word;
+          return word[0].toUpperCase() + word.substring(1).toLowerCase();
+        })
+        .join(' ');
   }
 
   // City card widget
-  Widget _buildCityCard(String cityName, double avgDb, int count, double maxDb) {
+  Widget _buildCityCard(
+    String cityName,
+    double avgDb,
+    int count,
+    double maxDb,
+  ) {
     Color cardColor;
     IconData icon;
 
@@ -508,10 +585,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
         decoration: BoxDecoration(
           color: ThemeHelper.getCardColor(context),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: cardColor.withValues(alpha:0.5),
-            width: 2,
-          ),
+          border: Border.all(color: cardColor.withValues(alpha: 0.5), width: 2),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -567,7 +641,10 @@ class _SearchListScreenState extends State<SearchListScreen> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.location_on, color: ThemeHelper.getPrimaryColor(context)),
+                  Icon(
+                    Icons.location_on,
+                    color: ThemeHelper.getPrimaryColor(context),
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     city,
@@ -614,70 +691,6 @@ class _SearchListScreenState extends State<SearchListScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  // Bottom Navigation Bar
-  Widget _buildBottomNavBar() {
-    return SafeArea(
-      top: false,
-      bottom: true,
-      child: Container(
-        height: 70,
-        decoration: BoxDecoration(
-        color: AppTheme.darkPurple,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha:0.2),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildNavButton(Icons.map_outlined, () => Navigator.pop(context)),
-          _buildNavButton(Icons.bar_chart, () => Navigator.pop(context)),
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: ThemeHelper.getPrimaryColor(context),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: ThemeHelper.getPrimaryColor(context).withValues(alpha:0.3),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-              child: Icon(Icons.home, color: Colors.white, size: 28),
-            ),
-          ),
-          _buildNavButton(Icons.search, () {}, isActive: true),
-          _buildNavButton(Icons.settings_outlined, () => Navigator.pop(context)),
-        ],
-      ),
-      ),
-    );
-  }
-
-  Widget _buildNavButton(IconData icon, VoidCallback onTap, {bool isActive = false}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        child: Icon(
-          icon,
-          color: isActive ? ThemeHelper.getPrimaryColor(context) : ThemeHelper.getSecondaryTextColor(context),
-          size: 28,
-        ),
-      ),
     );
   }
 }

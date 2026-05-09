@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
 import '../utils/app_logger.dart';
@@ -36,6 +37,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   int _pollutionCount = 0;
   int _ambientCount = 0;
   double _avgConfidence = 0.0;
+  int _totalCount = 0; // total readings in period (incl. unclassified)
+
+  // Cached trend stream — only recreated when _selectedPeriod changes,
+  // NOT on every setState (prevents Firestore re-subscription + chart flicker)
+  Stream<QuerySnapshot>? _trendStream;
 
   @override
   void initState() {
@@ -73,23 +79,49 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // ─── Data loading ────────────────────────────────────────────────────────────
 
   Future<void> _loadStatistics() async {
+    // Capture period NOW — used at the end to detect if the user changed
+    // period again while this async call was in flight (race condition guard).
+    final capturedPeriod = _selectedPeriod;
+
+    // Check userId FIRST, before any Firestore calls.
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
     try {
       final since = _getPeriodStartDate();
-      final stats = await _firebaseService.calculateStatsByPeriod(since);
 
-      final userId = FirebaseAuth.instance.currentUser?.uid;
-      if (userId == null) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-        return;
+      final newStream =
+          _firebaseService.getUserReadingsByPeriod(userId, since);
+
+      // Atomically update the stream AND clear all analytics data from
+      // the previous period. Without this, switching Monthly (0 data) →
+      // Weekly would show stale values until the new query resolves.
+      if (mounted) {
+        setState(() {
+          _trendStream = newStream;
+          _soundTypeCounts = {};
+          _pollutionCount = 0;
+          _ambientCount = 0;
+          _avgConfidence = 0.0;
+          _avgDb = 0;
+          _minDb = 0;
+          _maxDb = 0;
+          _totalHours = 0;
+          _totalCount = 0;
+        });
       }
 
-      // Load period-filtered readings for sound classification stats
+      // Load stats and classification counts for the selected period.
+      // getUserReadingsByPeriodOnce uses .get() — not newStream.first — to avoid
+      // the broadcast-stream race: StreamBuilder subscribes to newStream via the
+      // setState above, Firestore emits its initial event to it, and newStream.first
+      // would miss that event (broadcast streams don't buffer), hanging forever.
+      final stats = await _firebaseService.calculateStatsByPeriod(since);
       final snapshot =
-          await _firebaseService.getUserReadingsByPeriod(userId, since).first;
+          await _firebaseService.getUserReadingsByPeriodOnce(userId, since);
 
       final soundTypeCounts = <String, int>{};
       int pollutionCount = 0;
@@ -120,27 +152,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         }
       }
 
-      if (mounted) {
-        setState(() {
-          _avgDb = stats['avg'] ?? 0;
-          _minDb = stats['min'] ?? 0;
-          _maxDb = stats['max'] ?? 0;
-          _totalHours = (stats['count'] ?? 0) / 12;
-          _soundTypeCounts = soundTypeCounts;
-          _pollutionCount = pollutionCount;
-          _ambientCount = ambientCount;
-          _avgConfidence =
-              confidenceCount > 0 ? totalConfidence / confidenceCount : 0.0;
-          _isLoading = false;
-        });
-      }
+      // Race condition guard: only apply results if the period the user sees
+      // right now is still the same one this query was issued for.
+      if (!mounted || _selectedPeriod != capturedPeriod) return;
+
+      setState(() {
+        _avgDb = stats['avg'] ?? 0;
+        _minDb = stats['min'] ?? 0;
+        _maxDb = stats['max'] ?? 0;
+        _totalHours = (stats['count'] ?? 0) / 12;
+        _totalCount = (stats['totalDocs'] ?? stats['count'] ?? 0).toInt();
+        _soundTypeCounts = soundTypeCounts;
+        _pollutionCount = pollutionCount;
+        _ambientCount = ambientCount;
+        _avgConfidence =
+            confidenceCount > 0 ? totalConfidence / confidenceCount : 0.0;
+        _isLoading = false;
+      });
     } catch (e) {
       AppLogger.error('Error loading statistics', e);
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -195,29 +226,34 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   /// Returns the x-axis label widget for a given bucket value.
+  /// interval: 1 ensures this is only called at integer x-values (0, 1, 2…)
+  /// so no duplicate labels can appear.
   Widget _getXAxisWidget(double value, TitleMeta meta) {
     final now = DateTime.now();
+    final bucketIdx = value.toInt();
     String label = '';
 
     if (_selectedPeriod == 'Daily') {
-      // Show label every 6 hours: bucket 23=now, 17=6h ago, 11=12h ago, 5=18h ago
-      final hoursAgo = 23 - value.toInt();
-      final date = now.subtract(Duration(hours: hoursAgo));
-      if (date.hour % 6 == 0) {
+      // Labels at bucket positions 0, 6, 12, 18 (every 6 buckets)
+      // Bucket 0 = 23h ago, bucket 23 = current hour
+      if (bucketIdx % 6 == 0) {
+        final hoursAgo = 23 - bucketIdx;
+        final date = now.subtract(Duration(hours: hoursAgo));
         label = '${date.hour.toString().padLeft(2, '0')}h';
       }
     } else if (_selectedPeriod == 'Weekly') {
-      // Show all 7 day abbreviations
-      final daysAgo = 6 - value.toInt();
+      // Labels at all 7 positions (0=6 days ago … 6=today)
+      final daysAgo = 6 - bucketIdx;
       final date = now.subtract(Duration(days: daysAgo));
       const dayAbbr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      label = dayAbbr[date.weekday - 1];
+      label = dayAbbr[date.weekday - 1]; // weekday: 1=Mon … 7=Sun
     } else {
-      // Monthly: show a date label every 7 days
-      final daysAgo = 29 - value.toInt();
-      if (daysAgo % 7 == 0) {
+      // Monthly: labels at bucket positions 0, 7, 14, 21, 28 (every 7 buckets)
+      // Bucket 0 = 29 days ago, bucket 29 = today
+      if (bucketIdx % 7 == 0) {
+        final daysAgo = 29 - bucketIdx;
         final date = now.subtract(Duration(days: daysAgo));
-        label = '${date.day}/${date.month}';
+        label = DateFormat('MMM d').format(date); // e.g. "Jan 25", "Feb 1"
       }
     }
 
@@ -242,15 +278,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Scaffold(
       backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
+        centerTitle: true,
         title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text('Analytics', style: TextStyle(fontSize: 20)),
+            Text('Analytics',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             Text('Noise Stats',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: ThemeHelper.getTextColor(context))),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w400)),
           ],
         ),
         automaticallyImplyLeading: false,
@@ -282,6 +317,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Context banner
+                  _buildContextBanner(),
+
+                  const SizedBox(height: 16),
+
                   // Time-period chips (Daily | Weekly | Monthly)
                   _buildPeriodFilterChips(),
 
@@ -340,15 +380,103 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
+  // ─── Context Banner ───────────────────────────────────────────────────────────
+
+  Widget _buildContextBanner() {
+    final primaryColor = ThemeHelper.getPrimaryColor(context);
+    final totalReadings = _totalCount; // all readings in period, incl. unclassified
+    final periodLabel = _getPeriodLabel();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: primaryColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: primaryColor.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: primaryColor.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.person_outline, color: primaryColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Your Personal Analytics',
+                  style: TextStyle(
+                    color: ThemeHelper.getTextColor(context),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'All your recorded locations • $periodLabel',
+                  style: TextStyle(
+                    color: ThemeHelper.getSecondaryTextColor(context),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (totalReadings > 0) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: primaryColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    '$totalReadings',
+                    style: TextStyle(
+                      color: primaryColor,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      height: 1.1,
+                    ),
+                  ),
+                  Text(
+                    'readings',
+                    style: TextStyle(
+                      color: ThemeHelper.getSecondaryTextColor(context),
+                      fontSize: 10,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   // ─── Period Filter Chips ─────────────────────────────────────────────────────
 
   Widget _buildPeriodFilterChips() {
-    return Row(
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
       children: [
         _buildPeriodChip('Daily'),
-        const SizedBox(width: 12),
         _buildPeriodChip('Weekly'),
-        const SizedBox(width: 12),
         _buildPeriodChip('Monthly'),
       ],
     );
@@ -397,12 +525,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // ─── Sound Type Filter Chips ─────────────────────────────────────────────────
 
   Widget _buildFilterChips() {
-    return Row(
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
       children: [
         _buildFilterChip('All'),
-        const SizedBox(width: 12),
         _buildFilterChip('Pollution'),
-        const SizedBox(width: 12),
         _buildFilterChip('Ambient'),
       ],
     );
@@ -595,14 +723,20 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         'Construction',
         'Industrial',
         'Tuk-tuk',
-        'Speech-Pollution'
+        'Transport',
+        'Alarm',
       ];
       final ambientCategories = [
         'Music',
         'Nature',
-        'Speech-Ambient',
+        'Speech',
         'Religious',
-        'Market'
+        'Market',
+        'Domestic',
+        'Body Sounds',
+        'Sports',
+        'Weather',
+        'Office',
       ];
 
       for (var entry in _soundTypeCounts.entries) {
@@ -782,9 +916,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // ─── Trend Chart ─────────────────────────────────────────────────────────────
 
   Widget _buildTrendChart() {
-    final userId = FirebaseAuth.instance.currentUser?.uid;
-
-    if (userId == null) {
+    if (FirebaseAuth.instance.currentUser == null) {
       return Container(
         height: 220,
         padding: const EdgeInsets.all(20),
@@ -795,14 +927,32 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         child: Center(
           child: Text(
             'Please log in to view trends',
-            style:
-                TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
+            style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
           ),
         ),
       );
     }
 
-    final since = _getPeriodStartDate();
+    // Use the cached stream set by _loadStatistics().
+    // If null (load failed or not yet ready), show an error state.
+    final stream = _trendStream;
+    if (stream == null) {
+      return Container(
+        height: 220,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: ThemeHelper.getCardColor(context),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Center(
+          child: Text(
+            'Unable to load trend data.',
+            style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
+          ),
+        ),
+      );
+    }
+
     final maxX = _selectedPeriod == 'Daily'
         ? 23.0
         : _selectedPeriod == 'Weekly'
@@ -830,13 +980,27 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           SizedBox(
             height: 180,
             child: StreamBuilder<QuerySnapshot>(
-              stream:
-                  _firebaseService.getUserReadingsByPeriod(userId, since),
+              stream: stream, // cached — not re-created on sound-filter taps
               builder: (context, snapshot) {
+                // Show spinner while waiting for first data from Firestore.
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
+                  return Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: ThemeHelper.getPrimaryColor(context),
+                      ),
+                    ),
+                  );
+                }
+
                 if (snapshot.hasError) {
                   return Center(
                     child: Text(
-                      'Error: ${snapshot.error}',
+                      'Error loading chart data.',
                       style: TextStyle(color: Colors.red, fontSize: 12),
                       textAlign: TextAlign.center,
                     ),
@@ -854,8 +1018,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   );
                 }
 
-                final spots =
-                    _buildTimeAggregatedSpots(snapshot.data!.docs);
+                final spots = _buildTimeAggregatedSpots(snapshot.data!.docs);
 
                 if (spots.isEmpty) {
                   return Center(
@@ -867,13 +1030,39 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   );
                 }
 
+                // Dynamic maxY: 15 dB headroom above the highest reading,
+                // clamped between 60 (minimum useful ceiling) and 140 dB.
+                final dataMax =
+                    spots.map((s) => s.y).reduce((a, b) => a > b ? a : b);
+                final chartMaxY = (dataMax + 15).clamp(60.0, 140.0);
+
                 return LineChart(
                   LineChartData(
+                    lineTouchData: LineTouchData(
+                      touchTooltipData: LineTouchTooltipData(
+                        getTooltipColor: (_) =>
+                            ThemeHelper.getPrimaryColor(context)
+                                .withValues(alpha: 0.9),
+                        getTooltipItems: (touchedSpots) {
+                          return touchedSpots.map((spot) {
+                            return LineTooltipItem(
+                              '${spot.y.toStringAsFixed(1)} dB',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            );
+                          }).toList();
+                        },
+                      ),
+                    ),
                     gridData: const FlGridData(show: false),
                     titlesData: FlTitlesData(
                       bottomTitles: AxisTitles(
                         sideTitles: SideTitles(
                           showTitles: true,
+                          interval: 1, // integer ticks only — no duplicate labels
                           getTitlesWidget: _getXAxisWidget,
                           reservedSize: 28,
                         ),
@@ -889,7 +1078,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     minX: 0,
                     maxX: maxX,
                     minY: 0,
-                    maxY: 100,
+                    maxY: chartMaxY,
                     lineBarsData: [
                       LineChartBarData(
                         spots: spots,
@@ -904,8 +1093,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                               radius: 4,
                               color: Colors.white,
                               strokeWidth: 2,
-                              strokeColor:
-                                  ThemeHelper.getPrimaryColor(context),
+                              strokeColor: ThemeHelper.getPrimaryColor(context),
                             );
                           },
                         ),

@@ -50,13 +50,14 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
         title: const Text('Community Feed'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: _firestore
@@ -83,7 +84,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   Icon(
                     Icons.error_outline,
                     size: 64,
-                    color: Theme.of(context).brightness == Brightness.dark
+                    color: Theme
+                        .of(context)
+                        .brightness == Brightness.dark
                         ? AppTheme.textGray
                         : AppTheme.textLightGray,
                   ),
@@ -91,7 +94,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   Text(
                     'Error loading community feed',
                     style: TextStyle(
-                      color: Theme.of(context).brightness == Brightness.dark
+                      color: Theme
+                          .of(context)
+                          .brightness == Brightness.dark
                           ? AppTheme.textGray
                           : AppTheme.textLightGray,
                       fontSize: 16,
@@ -111,7 +116,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   Icon(
                     Icons.people_outline,
                     size: 64,
-                    color: Theme.of(context).brightness == Brightness.dark
+                    color: Theme
+                        .of(context)
+                        .brightness == Brightness.dark
                         ? AppTheme.textGray
                         : AppTheme.textLightGray,
                   ),
@@ -119,7 +126,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   Text(
                     'No community reports yet',
                     style: TextStyle(
-                      color: Theme.of(context).brightness == Brightness.dark
+                      color: Theme
+                          .of(context)
+                          .brightness == Brightness.dark
                           ? AppTheme.textGray
                           : AppTheme.textLightGray,
                       fontSize: 16,
@@ -129,7 +138,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   Text(
                     'Be the first to contribute!',
                     style: TextStyle(
-                      color: Theme.of(context).brightness == Brightness.dark
+                      color: Theme
+                          .of(context)
+                          .brightness == Brightness.dark
                           ? AppTheme.textGray
                           : AppTheme.textLightGray,
                       fontSize: 14,
@@ -155,7 +166,8 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
               itemBuilder: (context, index) {
                 final report = reports[index].data() as Map<String, dynamic>;
                 final decibelLevel = (report['decibelLevel'] ?? 0.0).toDouble();
-                final locationName = report['locationName'] ?? 'Unknown Location';
+                final locationName = report['locationName'] ??
+                    'Unknown Location';
                 final userEmail = report['userEmail'] ?? 'Anonymous';
 
                 // Use server timestamp if available, otherwise fallback to client timestamp
@@ -181,75 +193,6 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           );
         },
       ),
-      bottomNavigationBar: _buildBottomNavBar(),
-    );
-  }
-
-  // Bottom Navigation Bar
-  Widget _buildBottomNavBar() {
-    final isDark = ThemeHelper.isDark(context);
-    return SafeArea(
-      top: false,
-      bottom: true,
-      child: Container(
-        height: 70,
-        decoration: BoxDecoration(
-          color: isDark ? AppTheme.darkPurple : ThemeHelper.getPrimaryColor(context),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.2),
-              blurRadius: 8,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _buildNavButton(Icons.map_outlined, () => Navigator.pop(context)),
-            _buildNavButton(Icons.bar_chart, () => Navigator.pop(context)),
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: ThemeHelper.getPrimaryColor(context),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.3),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: const Icon(Icons.home, color: Colors.white, size: 28),
-              ),
-            ),
-            _buildNavButton(Icons.history, () => Navigator.pop(context)),
-            _buildNavButton(Icons.settings_outlined, () => Navigator.pop(context)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNavButton(IconData icon, VoidCallback onTap, {bool isActive = false}) {
-    final isDark = ThemeHelper.isDark(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        child: Icon(
-          icon,
-          color: isActive
-              ? (isDark ? ThemeHelper.getPrimaryColor(context) : Colors.white)
-              : (isDark ? AppTheme.textGray : Colors.white.withValues(alpha: 0.7)),
-          size: 28,
-        ),
-      ),
     );
   }
 
@@ -266,7 +209,8 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
 
     // Mask email for privacy (show first 3 chars + ***)
     String displayName = userEmail;
-    if (userEmail != 'Anonymous' && userEmail != 'Deleted User' && userEmail.contains('@')) {
+    if (userEmail != 'Anonymous' && userEmail != 'Deleted User' &&
+        userEmail.contains('@')) {
       final emailParts = userEmail.split('@');
       if (emailParts[0].length > 3) {
         displayName = '${emailParts[0].substring(0, 3)}***@${emailParts[1]}';
@@ -276,7 +220,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
-      color: Theme.of(context).brightness == Brightness.dark
+      color: Theme
+          .of(context)
+          .brightness == Brightness.dark
           ? AppTheme.cardBackground
           : AppTheme.lightCardBackground,
       shape: RoundedRectangleBorder(
@@ -336,7 +282,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                       Icon(
                         Icons.location_on,
                         size: 16,
-                        color: Theme.of(context).brightness == Brightness.dark
+                        color: Theme
+                            .of(context)
+                            .brightness == Brightness.dark
                             ? AppTheme.primaryPurple
                             : AppTheme.accentPurple,
                       ),
@@ -345,7 +293,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                         child: Text(
                           locationName,
                           style: TextStyle(
-                            color: Theme.of(context).brightness == Brightness.dark
+                            color: Theme
+                                .of(context)
+                                .brightness == Brightness.dark
                                 ? AppTheme.textWhite
                                 : AppTheme.textDark,
                             fontSize: 16,
@@ -361,7 +311,8 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
 
                   // Noise level badge
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: noiseColor.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(8),
@@ -383,7 +334,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                       Icon(
                         Icons.person_outline,
                         size: 14,
-                        color: Theme.of(context).brightness == Brightness.dark
+                        color: Theme
+                            .of(context)
+                            .brightness == Brightness.dark
                             ? AppTheme.textGray
                             : AppTheme.textLightGray,
                       ),
@@ -392,7 +345,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                         child: Text(
                           displayName,
                           style: TextStyle(
-                            color: Theme.of(context).brightness == Brightness.dark
+                            color: Theme
+                                .of(context)
+                                .brightness == Brightness.dark
                                 ? AppTheme.textGray
                                 : AppTheme.textLightGray,
                             fontSize: 12,
@@ -405,7 +360,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                       Icon(
                         Icons.access_time,
                         size: 14,
-                        color: Theme.of(context).brightness == Brightness.dark
+                        color: Theme
+                            .of(context)
+                            .brightness == Brightness.dark
                             ? AppTheme.textGray
                             : AppTheme.textLightGray,
                       ),
@@ -413,7 +370,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                       Text(
                         timeAgo,
                         style: TextStyle(
-                          color: Theme.of(context).brightness == Brightness.dark
+                          color: Theme
+                              .of(context)
+                              .brightness == Brightness.dark
                               ? AppTheme.textGray
                               : AppTheme.textLightGray,
                           fontSize: 12,

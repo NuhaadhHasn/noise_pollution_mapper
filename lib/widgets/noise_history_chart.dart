@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import '../theme/app_theme.dart';
+import '../utils/theme_helper.dart';
 
 class NoiseHistoryChart extends StatelessWidget {
   final List<double> dbHistory;
@@ -16,24 +16,28 @@ class NoiseHistoryChart extends StatelessWidget {
       height: 150,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppTheme.cardBackground,
+        color: ThemeHelper.getCardColor(context),
         borderRadius: BorderRadius.circular(16),
       ),
       child: dbHistory.isEmpty
-          ? const Center(
+          ? Center(
               child: Text(
                 'Start measuring to see noise history',
-                style: TextStyle(color: AppTheme.textGray),
+                style: TextStyle(
+                  color: ThemeHelper.getSecondaryTextColor(context),
+                ),
               ),
             )
           : LineChart(
-              _buildChartData(),
-              duration: const Duration(milliseconds: 250), // Smooth animation
+              _buildChartData(context),
+              duration: const Duration(milliseconds: 250),
             ),
     );
   }
 
-  LineChartData _buildChartData() {
+  LineChartData _buildChartData(BuildContext context) {
+    final primaryColor = ThemeHelper.getPrimaryColor(context);
+    
     // Prepare data points
     final spots = <FlSpot>[];
     final dataToShow = dbHistory.length > 50 ? dbHistory.sublist(dbHistory.length - 50) : dbHistory;
@@ -56,21 +60,21 @@ class NoiseHistoryChart extends StatelessWidget {
       minY: 0,
       maxY: 100,
 
-      // Line and area styling
+      // Line and area styling - theme-aware
       lineBarsData: [
         LineChartBarData(
           spots: spots,
           isCurved: true,
-          color: AppTheme.primaryPurple,
+          color: primaryColor,
           barWidth: 3,
           isStrokeCapRound: true,
-          dotData: const FlDotData(show: false), // No dots on line
+          dotData: const FlDotData(show: false),
           belowBarData: BarAreaData(
             show: true,
             gradient: LinearGradient(
               colors: [
-                AppTheme.primaryPurple.withValues(alpha:0.5),
-                AppTheme.primaryPurple.withValues(alpha:0.1),
+                primaryColor.withValues(alpha: 0.5),
+                primaryColor.withValues(alpha: 0.1),
               ],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,

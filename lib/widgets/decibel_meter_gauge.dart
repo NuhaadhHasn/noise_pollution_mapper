@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import '../theme/app_theme.dart';
+import '../utils/theme_helper.dart';
 
 class DecibelMeterGauge extends StatelessWidget {
   final double currentDb;
@@ -14,15 +15,16 @@ class DecibelMeterGauge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = ThemeHelper.isDark(context);
     return SizedBox(
-      width: 320, // BIGGER!
+      width: 320,
       height: 320,
       child: Stack(
         children: [
           // Gauge (background, arc, tick marks, numbers)
           CustomPaint(
             size: const Size(320, 320),
-            painter: DecibelGaugePainter(currentDb: currentDb, maxDb: maxDb),
+            painter: DecibelGaugePainter(currentDb: currentDb, maxDb: maxDb, isDark: isDark),
           ),
           // Digital number - positioned carefully
           Center(
@@ -30,11 +32,11 @@ class DecibelMeterGauge extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Transform.translate(
-                  offset: const Offset(0, -30), // Only move NUMBER up slightly
+                  offset: const Offset(0, -30),
                   child: Text(
                     currentDb.toStringAsFixed(0),
-                    style: const TextStyle(
-                      color: AppTheme.textWhite,
+                    style: TextStyle(
+                      color: isDark ? AppTheme.textWhite : AppTheme.textDark,
                       fontSize: 72,
                       fontWeight: FontWeight.bold,
                       letterSpacing: -2,
@@ -43,10 +45,10 @@ class DecibelMeterGauge extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 // dB label stays at normal position
-                const Text(
+                Text(
                   'dB',
                   style: TextStyle(
-                    color: AppTheme.textGray,
+                    color: isDark ? AppTheme.textGray : AppTheme.textLightGray,
                     fontSize: 24,
                     fontWeight: FontWeight.w300,
                     letterSpacing: 2,
@@ -58,7 +60,7 @@ class DecibelMeterGauge extends StatelessWidget {
           // Needle (on top!)
           CustomPaint(
             size: const Size(320, 320),
-            painter: NeedlePainter(currentDb: currentDb, maxDb: maxDb),
+            painter: NeedlePainter(currentDb: currentDb, maxDb: maxDb, isDark: isDark),
           ),
         ],
       ),
@@ -70,17 +72,18 @@ class DecibelMeterGauge extends StatelessWidget {
 class DecibelGaugePainter extends CustomPainter {
   final double currentDb;
   final double maxDb;
+  final bool isDark;
 
-  DecibelGaugePainter({required this.currentDb, required this.maxDb});
+  DecibelGaugePainter({required this.currentDb, required this.maxDb, required this.isDark});
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2 - 40;
 
-    // Background circle
+    // Background circle - theme-aware
     final bgPaint = Paint()
-      ..color = AppTheme.cardBackground
+      ..color = isDark ? AppTheme.cardBackground : AppTheme.lightCardBackground
       ..style = PaintingStyle.stroke
       ..strokeWidth = 20;
 
@@ -136,7 +139,7 @@ class DecibelGaugePainter extends CustomPainter {
 
       // Draw tick mark
       final tickPaint = Paint()
-        ..color = AppTheme.textWhite.withValues(alpha:0.6)
+        ..color = isDark ? AppTheme.textWhite.withValues(alpha: 0.6) : AppTheme.textDark.withValues(alpha: 0.6)
         ..strokeWidth = 3;
 
       final tickStart = Offset(
@@ -153,8 +156,8 @@ class DecibelGaugePainter extends CustomPainter {
       // Draw numbers
       textPainter.text = TextSpan(
         text: '$db',
-        style: const TextStyle(
-          color: AppTheme.textGray,
+        style: TextStyle(
+          color: isDark ? AppTheme.textGray : AppTheme.textLightGray,
           fontSize: 14,
           fontWeight: FontWeight.w600,
         ),
@@ -189,8 +192,9 @@ class DecibelGaugePainter extends CustomPainter {
 class NeedlePainter extends CustomPainter {
   final double currentDb;
   final double maxDb;
+  final bool isDark;
 
-  NeedlePainter({required this.currentDb, required this.maxDb});
+  NeedlePainter({required this.currentDb, required this.maxDb, required this.isDark});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -202,12 +206,11 @@ class NeedlePainter extends CustomPainter {
     // Draw needle - LONGER to match bigger gauge
     final needlePaint = Paint()
       ..color = AppTheme.primaryPurple
-      ..strokeWidth =
-          6 // Thicker
+      ..strokeWidth = 6
       ..strokeCap = StrokeCap.round;
 
     final needleEnd = Offset(
-      center.dx + (radius - 5) * math.cos(needleAngle), // Much longer!
+      center.dx + (radius - 5) * math.cos(needleAngle),
       center.dy + (radius - 5) * math.sin(needleAngle),
     );
 
@@ -220,9 +223,9 @@ class NeedlePainter extends CustomPainter {
 
     canvas.drawCircle(center, 10, dotPaint);
 
-    // White center dot
+    // White center dot - theme-aware
     final whiteDotPaint = Paint()
-      ..color = AppTheme.textWhite
+      ..color = isDark ? AppTheme.textWhite : AppTheme.textDark
       ..style = PaintingStyle.fill;
 
     canvas.drawCircle(center, 5, whiteDotPaint);

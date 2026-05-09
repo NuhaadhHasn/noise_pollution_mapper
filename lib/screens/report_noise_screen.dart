@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
+import '../utils/shared_app_state.dart';
 
 class ReportNoiseScreen extends StatefulWidget {
   const ReportNoiseScreen({super.key});
@@ -14,7 +15,7 @@ class ReportNoiseScreen extends StatefulWidget {
   State<ReportNoiseScreen> createState() => _ReportNoiseScreenState();
 }
 
-class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
+class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindingObserver {
   final FirebaseService _firebaseService = FirebaseService();
 
   double _manualDb = 50.0; // Default value
@@ -23,6 +24,14 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
   String _locationName = 'Unknown Location';
   bool _isSubmitting = false;
 
+  // Location debouncing to prevent duplicate dialogs
+  bool _isGettingLocation = false;
+  DateTime? _lastLocationRequestTime;
+  static const Duration _locationRequestDebounce = Duration(seconds: 30);
+  
+  // Use shared flag from Dashboard to prevent duplicate dialogs across screens
+  // Reference: DashboardScreen._locationDialogShown (static)
+
   // Sound classification options
   String? _selectedSoundClass;
   final List<Map<String, dynamic>> _soundClassOptions = [
@@ -30,23 +39,110 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
     {'value': 'Construction', 'type': 'Pollution', 'icon': Icons.construction},
     {'value': 'Industrial', 'type': 'Pollution', 'icon': Icons.factory},
     {'value': 'Tuk-tuk', 'type': 'Pollution', 'icon': Icons.moped},
+    {'value': 'Transport', 'type': 'Pollution', 'icon': Icons.train},
+    {'value': 'Alarm', 'type': 'Pollution', 'icon': Icons.alarm},
     {'value': 'Speech-Pollution', 'type': 'Pollution', 'icon': Icons.campaign},
     {'value': 'Music', 'type': 'Ambient', 'icon': Icons.music_note},
     {'value': 'Nature', 'type': 'Ambient', 'icon': Icons.nature},
     {'value': 'Speech-Ambient', 'type': 'Ambient', 'icon': Icons.person},
     {'value': 'Religious', 'type': 'Ambient', 'icon': Icons.temple_hindu},
     {'value': 'Market', 'type': 'Ambient', 'icon': Icons.store},
+    {'value': 'Domestic', 'type': 'Ambient', 'icon': Icons.home},
+    {'value': 'Body Sounds', 'type': 'Ambient', 'icon': Icons.favorite_border},
+    {'value': 'Sports', 'type': 'Ambient', 'icon': Icons.sports_soccer},
+    {'value': 'Weather', 'type': 'Ambient', 'icon': Icons.cloud},
+    {'value': 'Office', 'type': 'Ambient', 'icon': Icons.business_center},
   ];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _getCurrentLocation();
   }
 
-  // Get current GPS location
-  Future<void> _getCurrentLocation() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // When user returns from settings (app resumes), check if location changed
+    if (state == AppLifecycleState.resumed) {
+      AppLogger.info('Report: 📍 App resumed, checking if location changed...');
+      // Small delay to ensure screen is fully built
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _checkAndRefreshLocation();
+        }
+      });
+    }
+  }
+
+  // Check if location should be refreshed (called when screen becomes visible)
+  Future<void> _checkAndRefreshLocation() async {
+    if (!mounted) return;
+    
+    // Check if location services are now enabled
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    
+    if (serviceEnabled && _locationName == 'Location services disabled') {
+      // Location was enabled - refresh!
+      AppLogger.info('Report: 📍 Location enabled while screen was inactive, refreshing...');
+      // Reset shared flag so dialog can show again if needed
+      SharedAppState.locationDialogShown = false;
+      await _getCurrentLocation(forceRefresh: true);
+    } else if (!serviceEnabled && !_locationName.contains('disabled') && !_locationName.contains('denied')) {
+      // Location was disabled - update UI to show disabled state
+      AppLogger.info('Report: 📍 Location disabled while screen was inactive, updating UI...');
+      setState(() {
+        _locationName = 'Location services disabled';
+      });
+    }
+  }
+
+  // Get current GPS location with debouncing
+  Future<void> _getCurrentLocation({bool forceRefresh = false}) async {
+    // Prevent concurrent location requests (unless force refresh)
+    if (!forceRefresh && _isGettingLocation) {
+      AppLogger.debug('Report: Location request already in progress, skipping');
+      return;
+    }
+
+    // Debounce rapid requests (except for force refresh)
+    if (!forceRefresh) {
+      final now = DateTime.now();
+      if (_lastLocationRequestTime != null &&
+          now.difference(_lastLocationRequestTime!) < _locationRequestDebounce) {
+        AppLogger.debug('Report: Location request debounced (too soon)');
+        return;
+      }
+    }
+
+    _isGettingLocation = true;
+    _lastLocationRequestTime = DateTime.now();
+
     try {
+      // Show loading state
+      if (mounted) {
+        setState(() {
+          _locationName = 'Fetching location...';
+        });
+      }
+
+      // Check permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      // Check if location services enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) {
+          _isGettingLocation = false;
+          _showNativeLocationDialog();
+        }
+        return;
+      }
+
       Position position = await Geolocator.getCurrentPosition();
 
       if (mounted) {
@@ -68,7 +164,43 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
         });
       }
     } catch (e) {
-      AppLogger.error('Error getting location', e);
+      AppLogger.error('Report: Error getting location', e);
+      // Only show dialog if not already showing (check shared state)
+      if (mounted && !SharedAppState.locationDialogShown) {
+        _isGettingLocation = false;
+        _showNativeLocationDialog();
+      }
+    } finally {
+      _isGettingLocation = false;
+    }
+  }
+
+  // Show native Android location settings dialog
+  Future<void> _showNativeLocationDialog() async {
+    if (!mounted) return;
+    
+    // Set shared flag to prevent other screens from showing dialog
+    SharedAppState.locationDialogShown = true;
+    AppLogger.info('Report: 🔵 Showing native location dialog...');
+    
+    try {
+      // This shows the native Android location settings dialog
+      final locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      );
+      
+      await Geolocator.getCurrentPosition(locationSettings: locationSettings);
+      
+      // If user enabled location and we got position, refresh location
+      if (mounted) {
+        AppLogger.info('Report: ✅ User enabled location, refreshing...');
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _getCurrentLocation(forceRefresh: true);
+      }
+    } catch (e) {
+      // User declined or dialog closed without enabling
+      AppLogger.debug('Report: User declined to enable location services');
     }
   }
 
@@ -135,9 +267,10 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
       appBar: AppBar(
         title: Text('Report Noise'),
         leading: IconButton(
-          icon: Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -347,16 +480,13 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
 
             const SizedBox(height: 24),
 
-            // Location button (full width)
-            _buildActionButton(
-              icon: Icons.location_on,
-              label: _locationName,
-              onTap: _getCurrentLocation,
+            // Location button (pill style, centered like Dashboard)
+            Center(
+              child: _buildLocationActionButton(),
             ),
           ],
         ),
       ),
-      bottomNavigationBar: _buildBottomNavBar(),
     );
   }
 
@@ -375,105 +505,81 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> {
     );
   }
 
-  // Action button (Photo, Location)
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
+  // Location action button with loading state and refresh icon (PILL STYLE like Dashboard)
+  Widget _buildLocationActionButton() {
     return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      onTap: _isGettingLocation ? null : () async {
+        AppLogger.info('Report: 📍 User tapped location to refresh');
+        // Check if location is disabled - if so, show dialog
+        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!serviceEnabled) {
+          AppLogger.info('Report: 📍 Location disabled, showing native dialog...');
+          // Reset flag to allow dialog to show again
+          SharedAppState.locationDialogShown = false;
+          _showNativeLocationDialog();
+        } else {
+          // Location enabled - just refresh
+          _getCurrentLocation(forceRefresh: true);
+        }
+      },
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
           color: ThemeHelper.getCardColor(context),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: ThemeHelper.getPrimaryColor(context).withValues(alpha:0.3)),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: ThemeHelper.getPrimaryColor(context), size: 20),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                color: ThemeHelper.getTextColor(context),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+            if (_isGettingLocation)
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    ThemeHelper.getPrimaryColor(context),
+                  ),
+                ),
+              )
+            else
+              Icon(
+                Icons.location_on,
+                color: ThemeHelper.getPrimaryColor(context),
+                size: 16,
               ),
-              overflow: TextOverflow.ellipsis,
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                _locationName,
+                style: TextStyle(
+                  color: ThemeHelper.getTextColor(context),
+                  fontSize: 14,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
+            if (!_isGettingLocation)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Icon(
+                  Icons.refresh,
+                  color: ThemeHelper.getSecondaryTextColor(context),
+                  size: 14,
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  // Bottom Navigation Bar
-  Widget _buildBottomNavBar() {
-    final isDark = ThemeHelper.isDark(context);
-    return SafeArea(
-      top: false,
-      bottom: true,
-      child: Container(
-        height: 70,
-        decoration: BoxDecoration(
-          color: isDark ? AppTheme.darkPurple : ThemeHelper.getPrimaryColor(context),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha:0.2),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildNavButton(Icons.map_outlined, () => Navigator.pop(context)),
-          _buildNavButton(Icons.bar_chart, () => Navigator.pop(context)),
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: ThemeHelper.getPrimaryColor(context),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: ThemeHelper.getPrimaryColor(context).withValues(alpha:0.3),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-              child: Icon(Icons.home, color: Colors.white, size: 28),
-            ),
-          ),
-          _buildNavButton(Icons.add_circle_outline, () {}, isActive: true),
-          _buildNavButton(Icons.settings_outlined, () => Navigator.pop(context)),
-        ],
-      ),
-      ),
-    );
-  }
-
-  Widget _buildNavButton(IconData icon, VoidCallback onTap, {bool isActive = false}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        child: Icon(
-          icon,
-          color: isActive ? ThemeHelper.getPrimaryColor(context) : AppTheme.textGray,
-          size: 28,
-        ),
-      ),
-    );
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 }
 

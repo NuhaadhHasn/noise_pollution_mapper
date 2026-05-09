@@ -53,6 +53,7 @@ class SharedBottomNavBar extends StatelessWidget {
     bool isDark,
   ) {
     final isActive = currentIndex == index;
+
     return InkWell(
       onTap: () => onTap(index),
       borderRadius: BorderRadius.circular(12),
@@ -60,11 +61,13 @@ class SharedBottomNavBar extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: Icon(
           icon,
+          // Dark mode: White when active, Gray when inactive
+          // Light mode: White when active, White with 50% alpha when inactive
           color: isActive
-              ? (isDark ? ThemeHelper.getPrimaryColor(context) : Colors.white)
+              ? Colors.white
               : (isDark
                     ? AppTheme.textGray
-                    : Colors.white.withValues(alpha: 0.7)),
+                    : Colors.white.withValues(alpha: 0.5)),
           size: 28,
         ),
       ),
@@ -73,25 +76,46 @@ class SharedBottomNavBar extends StatelessWidget {
 
   Widget _buildHomeButton(BuildContext context) {
     final isActive = currentIndex == 2;
+    final isDark = ThemeHelper.isDark(context);
+    final primaryColor = ThemeHelper.getPrimaryColor(context);
+
     return GestureDetector(
       onTap: () => onTap(2),
       child: Container(
         width: 56,
         height: 56,
         decoration: BoxDecoration(
-          color: isActive
-              ? ThemeHelper.getPrimaryColor(context)
-              : ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.8),
+          // Circle background: Primary color in dark mode, White in light mode
+          color: isDark ? primaryColor : Colors.white,
           shape: BoxShape.circle,
+          // Border: White in dark mode, Primary color in light mode
+          border: Border.all(
+            color: isActive
+                ? (isDark
+                      ? Colors.white.withValues(alpha: 0.5)
+                      : primaryColor.withValues(alpha: 0.8))
+                : (isDark
+                      ? Colors.white.withValues(alpha: 0.3)
+                      : primaryColor.withValues(alpha: 0.5)),
+            width: isActive ? 3 : 2,
+          ),
+          // Shadow: Larger when active
           boxShadow: [
             BoxShadow(
-              color: ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.3),
-              blurRadius: 8,
-              spreadRadius: 1,
+              color: isDark
+                  ? primaryColor.withValues(alpha: isActive ? 0.5 : 0.3)
+                  : Colors.black.withValues(alpha: isActive ? 0.3 : 0.15),
+              blurRadius: isActive ? 12 : 8,
+              spreadRadius: isActive ? 2 : 0,
             ),
           ],
         ),
-        child: const Icon(Icons.home, color: Colors.white, size: 28),
+        // Icon: White in dark mode, Primary color in light mode
+        child: Icon(
+          Icons.home,
+          color: isDark ? Colors.white : primaryColor,
+          size: 28,
+        ),
       ),
     );
   }

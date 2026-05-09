@@ -4,16 +4,216 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../theme/app_theme.dart';
 import '../utils/animations.dart';
 import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
 import 'report_noise_screen.dart';
 
-class HistoryScreen extends StatelessWidget {
+class HistoryScreen extends StatefulWidget {
   final bool isInAppShell;
 
   const HistoryScreen({super.key, this.isInAppShell = false});
+
+  @override
+  State<HistoryScreen> createState() => _HistoryScreenState();
+}
+
+class _HistoryScreenState extends State<HistoryScreen> {
+  final FirebaseService _firebaseService = FirebaseService();
+  final ScrollController _scrollController = ScrollController();
+  
+  List<DocumentSnapshot> _recordings = [];
+  bool _isLoading = false;
+  bool _hasMore = true;
+  DocumentSnapshot? _lastDocument;
+  int _totalCount = 0;
+  bool _isOffline = false;
+  
+  static const int _pageSize = 50;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkConnectivityAndLoad();
+    _scrollController.addListener(_onScroll);
+  }
+
+  // Check connectivity and load data
+  Future<void> _checkConnectivityAndLoad() async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline = connectivity.any((result) => 
+        result != ConnectivityResult.none && 
+        result != ConnectivityResult.bluetooth
+      );
+
+      if (mounted) {
+        setState(() {
+          _isOffline = !isOnline;
+        });
+
+        if (isOnline) {
+          _loadInitialRecordings();
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isOffline = true;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  // Load initial recordings
+  Future<void> _loadInitialRecordings() async {
+    if (_isLoading) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return;
+
+      // Get total count
+      _totalCount = await _firebaseService.getUserReadingsCount(userId);
+
+      // Load first page
+      final snapshot = await _firebaseService.getUserReadingsPaginated(
+        userId: userId,
+        limit: _pageSize,
+      );
+
+      if (mounted) {
+        setState(() {
+          _recordings = snapshot.docs;
+          _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
+          _hasMore = snapshot.docs.length == _pageSize;
+          _isLoading = false;
+          _isOffline = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isOffline = true;
+        });
+      }
+    }
+  }
+
+  // Load more recordings (infinite scroll)
+  Future<void> _loadMoreRecordings() async {
+    if (_isLoading || !_hasMore || _isOffline) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return;
+
+      if (_lastDocument == null) {
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final snapshot = await _firebaseService.getUserReadingsPaginated(
+        userId: userId,
+        limit: _pageSize,
+        startAfter: _lastDocument,
+      );
+
+      if (mounted) {
+        setState(() {
+          _recordings.addAll(snapshot.docs);
+          _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
+          _hasMore = snapshot.docs.length == _pageSize;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        // Don't show error for load more, just stop loading
+      }
+    }
+  }
+
+  // Scroll listener for infinite scroll
+  void _onScroll() {
+    if (_scrollController.position.pixels >= 
+        _scrollController.position.maxScrollExtent - 200) {
+      // Load more when within 200px of the end
+      _loadMoreRecordings();
+    }
+  }
+
+  // Pull to refresh
+  Future<void> _onRefresh() async {
+    await _checkConnectivityAndLoad();
+  }
+
+  // Show offline UI
+  Widget _buildOfflineUI() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.cloud_off_outlined,
+            size: 80,
+            color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No Internet Connection',
+            style: TextStyle(
+              color: ThemeHelper.getTextColor(context),
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Please turn on internet to view history',
+            style: TextStyle(
+              color: ThemeHelper.getSecondaryTextColor(context),
+              fontSize: 14,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _checkConnectivityAndLoad,
+            icon: Icon(Icons.refresh),
+            label: Text('Retry'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: ThemeHelper.getPrimaryColor(context),
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // Export data to CSV
   Future<void> _exportDataToCSV(BuildContext context) async {
@@ -130,7 +330,6 @@ class HistoryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final firebaseService = FirebaseService();
     final userId = FirebaseAuth.instance.currentUser?.uid;
 
     // If no user is logged in, show error
@@ -159,12 +358,14 @@ class HistoryScreen extends StatelessWidget {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('History', style: TextStyle(fontSize: 20)),
-            Text('Your Recordings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: ThemeHelper.getTextColor(context))),
+            Text('History', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            Text('Your Recordings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
           ],
         ),
         automaticallyImplyLeading: false,
-        leading: isInAppShell
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
+        actionsIconTheme: const IconThemeData(color: AppTheme.textWhite),
+        leading: widget.isInAppShell
             ? null
             : IconButton(
                 icon: Icon(Icons.arrow_back),
@@ -179,99 +380,99 @@ class HistoryScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: firebaseService.getUserReadings(userId),
-        builder: (context, snapshot) {
-          // Show error if there's an error
-          if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.error_outline, size: 64, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Error loading history',
-                    style: TextStyle(color: ThemeHelper.getTextColor(context), fontSize: 18),
+      body: RefreshIndicator(
+        onRefresh: _onRefresh,
+        child: Column(
+          children: [
+            // Show count indicator (only when online and has data)
+            if (_totalCount > 0 && !_isOffline)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  'Showing ${_recordings.length} of $_totalCount recordings',
+                  style: TextStyle(
+                    color: ThemeHelper.getSecondaryTextColor(context),
+                    fontSize: 12,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${snapshot.error}',
-                    style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context), fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            );
-          }
-
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(
-              child: CircularProgressIndicator(color: ThemeHelper.getPrimaryColor(context)),
-            );
-          }
-
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.history,
-                    size: 80,
-                    color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha:0.3),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No recordings yet',
-                    style: TextStyle(
-                      color: ThemeHelper.getSecondaryTextColor(context),
-                      fontSize: 18,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Start recording to build your history',
-                    style: TextStyle(
-                      color: ThemeHelper.getSecondaryTextColor(context),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          final docs = snapshot.data!.docs;
-
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
-              final data = docs[index].data() as Map<String, dynamic>;
-              final db = (data['decibelLevel'] as num).toDouble();
-              final location = data['locationName'] as String? ?? 'Unknown';
-              final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
-              final soundClass = data['soundClass'] as String?;
-              final soundType = data['soundType'] as String?;
-              final confidence = data['confidence'] as num?;
-
-              return FadeInListItem(
-                index: index,
-                child: _buildHistoryItem(
-                  context,
-                  db,
-                  location,
-                  timestamp,
-                  docs[index].id,
-                  soundClass: soundClass,
-                  soundType: soundType,
-                  confidence: confidence?.toDouble(),
                 ),
-              );
-            },
-          );
-        },
+              ),
+            // List view
+            Expanded(
+              child: _isOffline
+                  ? _buildOfflineUI()
+                  : _recordings.isEmpty && !_isLoading
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.history,
+                            size: 80,
+                            color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No recordings yet',
+                            style: TextStyle(
+                              color: ThemeHelper.getSecondaryTextColor(context),
+                              fontSize: 18,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Start recording to build your history',
+                            style: TextStyle(
+                              color: ThemeHelper.getSecondaryTextColor(context),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _recordings.length + (_hasMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index >= _recordings.length) {
+                          // Loading indicator at the bottom
+                          return Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                color: ThemeHelper.getPrimaryColor(context),
+                              ),
+                            ),
+                          );
+                        }
+
+                        final doc = _recordings[index];
+                        final data = doc.data() as Map<String, dynamic>;
+                        final db = (data['decibelLevel'] as num).toDouble();
+                        final location = data['locationName'] as String? ?? 'Unknown';
+                        final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
+                        final soundClass = data['soundClass'] as String?;
+                        final soundType = data['soundType'] as String?;
+                        final confidence = data['confidence'] as num?;
+
+                        return FadeInListItem(
+                          index: index,
+                          child: _buildHistoryItem(
+                            context,
+                            db,
+                            location,
+                            timestamp,
+                            doc.id,
+                            soundClass: soundClass,
+                            soundType: soundType,
+                            confidence: confidence?.toDouble(),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
       // Floating Action Button - Add Manual Entry
       floatingActionButton: FloatingActionButton.extended(
@@ -480,6 +681,20 @@ class HistoryScreen extends StatelessWidget {
         return Icons.nature;
       case 'tuk-tuk':
         return Icons.moped;
+      case 'domestic':
+        return Icons.home;
+      case 'alarm':
+        return Icons.alarm;
+      case 'body sounds':
+        return Icons.favorite_border;
+      case 'transport':
+        return Icons.train;
+      case 'sports':
+        return Icons.sports_soccer;
+      case 'weather':
+        return Icons.cloud;
+      case 'office':
+        return Icons.business_center;
       default:
         return Icons.volume_up;
     }

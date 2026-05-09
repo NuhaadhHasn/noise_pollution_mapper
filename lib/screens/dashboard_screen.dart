@@ -11,8 +11,10 @@ import '../theme/app_theme.dart';
 import '../utils/animations.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
+import '../utils/shared_app_state.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
+import '../widgets/sync_status_indicator.dart';
 import 'settings_screen_enhanced.dart';
 import 'splash_screen.dart';
 import '../services/firebase_service.dart';
@@ -30,7 +32,7 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
   final FirebaseService _firebaseService = FirebaseService();
   final SoundClassificationService _classificationService =
       SoundClassificationService();
@@ -60,8 +62,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double _latitude = 6.9271; // Colombo default
   double _longitude = 79.8612;
   bool _isLocationLoading = true;
-  int _locationRetryCount = 0;
-  static const int _maxLocationRetries = 3;
 
   // Timer for periodic Firebase saves (don't save every reading, save every 5 seconds)
   Timer? _saveTimer;
@@ -76,13 +76,64 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ClassificationResult? _currentClassification;
   bool _isClassifying = false;
 
+  // Prevent concurrent location requests
+  bool _isGettingLocation = false;
+  DateTime? _lastLocationRequestTime;
+  static const Duration _locationRequestDebounce = Duration(seconds: 30);
+  
+  // Track if location dialog already shown APP-WIDE (prevent duplicate dialogs across screens)
+  // Using SharedAppState for cross-screen communication
+  
+  // Track disposal state to prevent setState after dispose
+  bool _isDisposed = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeAudioRecorder();
     _requestPermissions();
-    _getCurrentLocation(); // Get GPS location on start
+    // Call location immediately (no delay - delay causes race condition)
+    _getCurrentLocation();
     AppLogger.debug('User ID: ${FirebaseAuth.instance.currentUser?.uid}');
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // When user returns from settings (app resumes), check if location is now enabled
+    if (state == AppLifecycleState.resumed) {
+      AppLogger.info('📍 App resumed, checking if location was enabled...');
+      // Small delay to ensure screen is fully built
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _checkAndRefreshLocation();
+        }
+      });
+    }
+  }
+
+  // Check if location should be refreshed (called when screen becomes visible)
+  Future<void> _checkAndRefreshLocation() async {
+    if (!mounted) return;
+    
+    // Check if location services are now enabled
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    
+    if (serviceEnabled && _locationName == 'Location services disabled') {
+      // Location was enabled - refresh!
+      AppLogger.info('📍 Location enabled while screen was inactive, refreshing...');
+      // Reset shared flag so dialog can show again if needed
+      SharedAppState.locationDialogShown = false;
+      await _getCurrentLocation(forceRefresh: true);
+    } else if (!serviceEnabled && !_locationName.contains('disabled') && !_locationName.contains('denied')) {
+      // Location was disabled - update UI to show disabled state
+      AppLogger.info('📍 Location disabled while screen was inactive, updating UI...');
+      setState(() {
+        _isLocationLoading = false;
+        _locationName = 'Location services disabled';
+      });
+    }
   }
 
   // Initialize audio recorder for sound classification
@@ -106,11 +157,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // Get current GPS location with retry mechanism
-  Future<void> _getCurrentLocation({bool isRetry = false}) async {
-    if (!isRetry) {
-      _locationRetryCount = 0;
+  // Get current GPS location with retry mechanism and debouncing
+  Future<void> _getCurrentLocation({bool isRetry = false, bool forceRefresh = false}) async {
+    // Prevent concurrent location requests (unless force refresh)
+    if (!forceRefresh && _isGettingLocation) {
+      AppLogger.debug('Location request already in progress, skipping');
+      return;
     }
+
+    // Debounce rapid requests (except for retries and force refresh)
+    if (!forceRefresh && !isRetry) {
+      final now = DateTime.now();
+      if (_lastLocationRequestTime != null &&
+          now.difference(_lastLocationRequestTime!) < _locationRequestDebounce) {
+        AppLogger.debug('Location request debounced (too soon)');
+        return;
+      }
+    }
+
+    _isGettingLocation = true;
+    _lastLocationRequestTime = DateTime.now();
 
     try {
       if (mounted) {
@@ -135,6 +201,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _locationName = 'Location permission denied';
           });
         }
+        _isGettingLocation = false;
+        // Show native Android location settings dialog
+        _showNativeLocationDialog();
+        return;
+      }
+
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        AppLogger.warning('Location service is disabled');
+        if (mounted) {
+          setState(() {
+            _isLocationLoading = false;
+            _locationName = 'Location services disabled';
+          });
+        }
+        _isGettingLocation = false;
+        // Show native Android location settings dialog
+        _showNativeLocationDialog();
         return;
       }
 
@@ -168,7 +253,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ).timeout(
           const Duration(seconds: 10),
           onTimeout: () {
-            AppLogger.warning('Geocoding timed out, using coordinates');
+            AppLogger.warning('Geocoding timed out, using GPS coordinates');
             return <Placemark>[];
           },
         );
@@ -187,42 +272,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           AppLogger.info('Location resolved: $locationName');
         } else if (mounted) {
-          // Fallback to coordinates if geocoding fails
+          // Fallback to GPS coordinates with label (not just raw coordinates)
           setState(() {
-            _locationName = '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+            _locationName = 'GPS: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
             _isLocationLoading = false;
           });
-          AppLogger.info('Using coordinates as location name');
+          AppLogger.info('Using GPS coordinates (geocoding failed)');
         }
       } catch (e) {
-        AppLogger.error('Error getting location name', e);
-        // Use coordinates as fallback
+        // Geocoding failed (likely offline) - show GPS coordinates with label
         if (mounted) {
           setState(() {
-            _locationName = '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+            _locationName = 'GPS: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
             _isLocationLoading = false;
           });
+          AppLogger.warning('Geocoding failed (offline?), using GPS coordinates: $e');
         }
       }
     } catch (e) {
-      AppLogger.error('Error getting location (attempt ${_locationRetryCount + 1})', e);
+      AppLogger.error('Error getting location', e);
 
-      // Retry logic
-      if (_locationRetryCount < _maxLocationRetries && mounted) {
-        _locationRetryCount++;
-        AppLogger.info('Retrying location fetch... ($_locationRetryCount/$_maxLocationRetries)');
-        await Future.delayed(const Duration(seconds: 2));
-        await _getCurrentLocation(isRetry: true);
-      } else {
-        // All retries failed
-        if (mounted) {
-          setState(() {
-            _isLocationLoading = false;
-            _locationName = 'Unknown Location';
-          });
-        }
-        AppLogger.warning('Failed to get location after $_maxLocationRetries attempts');
+      // Don't retry - show dialog immediately (but not if already showing)
+      if (mounted && !SharedAppState.locationDialogShown) {
+        setState(() {
+          _isLocationLoading = false;
+          _locationName = 'Location services disabled';
+        });
+        // Show native Android location settings dialog
+        _showNativeLocationDialog();
       }
+    } finally {
+      // Always reset the location flag when done (but not dialog flag)
+      _isGettingLocation = false;
     }
   }
 
@@ -247,65 +328,125 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // Show native Android location settings dialog
+  Future<void> _showNativeLocationDialog() async {
+    if (!mounted || SharedAppState.locationDialogShown) return;
+    
+    // Set shared flag to prevent other screens from showing dialog
+    SharedAppState.locationDialogShown = true;
+    AppLogger.info('🔵 Showing native location dialog...');
+    
+    try {
+      // This shows the native Android location settings dialog
+      final locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      );
+      
+      await Geolocator.getCurrentPosition(locationSettings: locationSettings);
+      
+      // If user enabled location and we got position, refresh location
+      if (mounted) {
+        AppLogger.info('✅ User enabled location, refreshing...');
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _getCurrentLocation(forceRefresh: true);
+      }
+    } catch (e) {
+      // User declined or dialog closed without enabling
+      AppLogger.debug('User declined to enable location services');
+    }
+  }
+
   // Start noise measurement
   void _startRecording() async {
     try {
-      // Refresh location when recording starts
-      _getCurrentLocation();
+      // CRITICAL: Check if already recording - prevent duplicate starts
+      if (_isRecording) {
+        AppLogger.warning('Already recording, ignoring start request');
+        return;
+      }
+
+      // CRITICAL: Check if audio recorder is already running
+      if (_audioRecorder != null && _audioRecorder!.isRecording) {
+        AppLogger.warning('Audio recorder already running, stopping first...');
+        _stopRecording(); // Don't await - it's void
+        // Small delay to ensure clean state
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
+      // Location already fetched on screen start, no need to request again
 
       // Start noise meter for dB readings
       _noiseMeter = NoiseMeter();
-      _noiseSubscription = _noiseMeter?.noise.listen((NoiseReading reading) {
-        setState(() {
-          // Apply calibration offset for phone microphone
-          // Phone mics read 10-20 dB higher than actual SPL
-          // This offset adjusts readings to realistic environmental values:
-          // - Quiet room: 30-40 dB (was showing 10-20 dB)
-          // - Normal conversation: 60-70 dB (was showing 30-50 dB)
-          // - Loud speech: 80-90 dB (was showing 50-60 dB)
-          // - Traffic: 70-85 dB
-          const double calibrationOffset = 10.0;
-          _currentDb = (reading.meanDecibel - calibrationOffset).clamp(
-            0.0,
-            120.0,
-          ); // Clamp to valid range
-
-          // Add to history (only valid values)
-          if (_currentDb.isFinite && _currentDb > 0) {
-            _dbHistory.add(_currentDb);
-            if (_dbHistory.length > 100) {
-              _dbHistory.removeAt(0); // Keep last 100 readings
+      _noiseSubscription = _noiseMeter?.noise.listen(
+        (NoiseReading reading) {
+          if (!_isRecording || !mounted) return;
+          
+          setState(() {
+            // Apply calibration offset for phone microphone
+            // Phone mics read 10-20 dB higher than actual SPL
+            // This offset adjusts readings to realistic environmental values:
+            // - Quiet room: 30-40 dB (was showing 10-20 dB)
+            // - Normal conversation: 60-70 dB (was showing 30-50 dB)
+            // - Loud speech: 80-90 dB (was showing 50-60 dB)
+            // - Traffic: 70-85 dB
+            const double calibrationOffset = 10.0;
+            final rawDb = reading.meanDecibel - calibrationOffset;
+            
+            // Validate dB range (filter unrealistic values)
+            // Environmental sounds typically range from 20-120 dB
+            if (rawDb < 10 || rawDb > 130) {
+              AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
+              return; // Don't add invalid readings
             }
+            
+            _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
 
-            // Update min, max, and average
-            if (_currentDb > _maxDb) _maxDb = _currentDb;
+            // Add to history (only valid values)
+            if (_currentDb.isFinite && _currentDb > 0) {
+              _dbHistory.add(_currentDb);
+              if (_dbHistory.length > 100) {
+                _dbHistory.removeAt(0); // Keep last 100 readings
+              }
 
-            // Set minDb to first reading if still infinity
-            if (_minDb == double.infinity) {
-              _minDb = _currentDb;
-            } else if (_currentDb < _minDb) {
-              _minDb = _currentDb;
+              // Update min, max, and average
+              if (_currentDb > _maxDb) _maxDb = _currentDb;
+
+              // Set minDb to first reading if still infinity
+              if (_minDb == double.infinity) {
+                _minDb = _currentDb;
+              } else if (_currentDb < _minDb) {
+                _minDb = _currentDb;
+              }
+
+              // Calculate average from history
+              if (_dbHistory.isNotEmpty) {
+                _avgDb = _dbHistory.reduce((a, b) => a + b) / _dbHistory.length;
+              }
+
+              // Check for high noise and show notification
+              if (_currentDb > 70 && !_hasShownHighNoiseAlert) {
+                NotificationService.showHighNoiseAlert(_currentDb);
+                _hasShownHighNoiseAlert =
+                    true; // Only alert once per recording session
+              }
+
+              // Reset alert flag if noise drops below threshold
+              if (_currentDb < 65) {
+                _hasShownHighNoiseAlert = false;
+              }
             }
-
-            // Calculate average from history
-            if (_dbHistory.isNotEmpty) {
-              _avgDb = _dbHistory.reduce((a, b) => a + b) / _dbHistory.length;
-            }
-
-            // Check for high noise and show notification
-            if (_currentDb > 70 && !_hasShownHighNoiseAlert) {
-              NotificationService.showHighNoiseAlert(_currentDb);
-              _hasShownHighNoiseAlert =
-                  true; // Only alert once per recording session
-            }
-
-            // Reset alert flag if noise drops below threshold
-            if (_currentDb < 65) {
-              _hasShownHighNoiseAlert = false;
-            }
-          }
-        });
-      });
+          });
+        },
+        onError: (error) {
+          AppLogger.error('Noise meter stream error', error);
+          // Don't cancel on error - let stream recover
+        },
+        onDone: () {
+          AppLogger.debug('Noise meter stream closed');
+        },
+        cancelOnError: false,
+      );
 
       // Start audio recorder for sound classification
       if (_audioRecorder != null && !_audioRecorder!.isRecording) {
@@ -313,11 +454,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         // Create stream controller to receive audio data
         _audioStreamController = StreamController<Uint8List>();
-        _audioStreamSubscription = _audioStreamController!.stream.listen((
-          buffer,
-        ) {
-          _processAudioData(buffer);
-        });
+        _audioStreamSubscription = _audioStreamController!.stream.listen(
+          (buffer) {
+            if (!_isRecording) return;
+            _processAudioData(buffer);
+          },
+          onError: (error) {
+            AppLogger.error('Audio stream error', error);
+          },
+          onDone: () {
+            AppLogger.debug('Audio stream closed');
+          },
+          cancelOnError: false,
+        );
 
         // Start recording with stream output
         await _audioRecorder!.startRecorder(
@@ -336,6 +485,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       // Start periodic Firebase saves (every 5 seconds)
       _saveTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+        // CRITICAL: Stop if not recording (prevents timer leak)
+        if (!_isRecording || !mounted) return;
+        
         if (_currentDb > 0 && _currentDb.isFinite) {
           _firebaseService.saveNoiseReading(
             decibelLevel: _currentDb,
@@ -355,6 +507,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _classificationTimer = Timer.periodic(const Duration(seconds: 5), (
         timer,
       ) {
+        // CRITICAL: Stop if not recording (prevents timer leak)
+        if (!_isRecording || !mounted) return;
+        
         _performSoundClassification();
       });
     } catch (e) {
@@ -370,8 +525,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final int sample16 = bytes[i] | (bytes[i + 1] << 8);
       // Convert to signed value
       final int signedSample = sample16 > 32767 ? sample16 - 65536 : sample16;
-      // Normalize to [-1.0, 1.0]
-      final double normalizedSample = signedSample / 32768.0;
+      // Normalize to [-1.0, 1.0] using correct divisor (32767 is max Int16)
+      final double normalizedSample = signedSample / 32767.0;
 
       _audioBuffer.add(normalizedSample);
     }
@@ -392,23 +547,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _saveTimer?.cancel();
     _classificationTimer?.cancel();
 
-    // Stop audio recorder
+    // Stop audio recorder with timeout (CRITICAL FIX - prevents hanging)
     if (_audioRecorder != null && _audioRecorder!.isRecording) {
-      await _audioRecorder!.stopRecorder();
-      AppLogger.debug('Stopped audio capture');
+      try {
+        await _audioRecorder!.stopRecorder().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            AppLogger.warning('⚠️ stopRecorder() timed out, forcing state reset');
+            return; // Explicit return to satisfy nullable return type
+          },
+        );
+        AppLogger.debug('Stopped audio capture');
+      } catch (e) {
+        AppLogger.error('Failed to stop audio recorder', e);
+        // Continue anyway - force state reset
+      }
     }
 
     // Close stream controller
-    await _audioStreamController?.close();
+    try {
+      await _audioStreamController?.close();
+    } catch (e) {
+      AppLogger.error('Failed to close audio stream controller', e);
+    }
     _audioStreamController = null;
 
     _audioBuffer.clear();
 
-    if (mounted) {
+    // Always reset state, even if recorder failed to stop
+    if (mounted && !_isDisposed) {
       setState(() {
         _isRecording = false;
         _currentClassification = null; // Clear classification when stopped
       });
+      AppLogger.info('Recording stopped, state reset complete');
     }
   }
 
@@ -417,28 +589,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Uses real audio samples captured from the device microphone
   /// Buffers 0.975 seconds of audio (15600 samples at 16kHz) for YAMNet classification
   Future<void> _performSoundClassification() async {
-    if (_isClassifying || !_classificationService.isInitialized) {
+    if (_isClassifying || !_classificationService.isInitialized || _isDisposed) {
       return;
     }
 
     // Check if we have enough audio samples
     if (_audioBuffer.length < _requiredSamples) {
-      AppLogger.debug(
-        'Waiting for audio buffer... (${_audioBuffer.length}/$_requiredSamples samples)',
-      );
-      return;
+      // If we have at least 50% of samples, pad with zeros and classify anyway
+      if (_audioBuffer.length >= _requiredSamples * 0.5) {
+        AppLogger.debug('Buffer has ${((_audioBuffer.length / _requiredSamples) * 100).toStringAsFixed(0)}% of samples, padding and classifying...');
+      } else {
+        AppLogger.debug(
+          'Waiting for audio buffer... (${_audioBuffer.length}/$_requiredSamples samples)',
+        );
+        return;
+      }
     }
 
+    if (!mounted || _isDisposed) return;
     setState(() {
       _isClassifying = true;
     });
 
     try {
-      // Extract the most recent 15600 samples from the buffer
-      final audioSamples = _audioBuffer.sublist(
-        _audioBuffer.length - _requiredSamples,
-        _audioBuffer.length,
-      );
+      // Extract the most recent samples (or use all if less than required)
+      List<double> audioSamples;
+      if (_audioBuffer.length >= _requiredSamples) {
+        audioSamples = _audioBuffer.sublist(
+          _audioBuffer.length - _requiredSamples,
+          _audioBuffer.length,
+        );
+      } else {
+        // Use available samples + pad with zeros
+        audioSamples = List<double>.from(_audioBuffer);
+        audioSamples.addAll(
+          List<double>.filled(_requiredSamples - _audioBuffer.length, 0.0),
+        );
+        AppLogger.warning('Classifying with padded audio (${audioSamples.length} samples)');
+      }
 
       AppLogger.debug('Classifying ${audioSamples.length} real audio samples...');
 
@@ -448,7 +636,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _targetSampleRate,
       );
 
-      if (result != null && mounted) {
+      if (result != null && mounted && !_isDisposed) {
         setState(() {
           _currentClassification = result;
         });
@@ -460,7 +648,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } catch (e) {
       AppLogger.error('Error during classification', e);
     } finally {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         setState(() {
           _isClassifying = false;
         });
@@ -470,8 +658,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    _isDisposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _stopRecording();
     _audioRecorder?.closeRecorder();
+    // Don't reset locationDialogShown - it's static and shared across app lifetime
     super.dispose();
   }
 
@@ -481,9 +672,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: ThemeHelper.getBackgroundColor(context),
       appBar: AppBar(
         title: const Text('Dashboard'),
-        automaticallyImplyLeading: false, // No back button after login/signup
+        automaticallyImplyLeading: false,
+        iconTheme: const IconThemeData(color: AppTheme.textWhite),
+        actionsIconTheme: const IconThemeData(color: AppTheme.textWhite),
         actions: [
-          // Logout button
+          // Sync status indicator (shows online/offline and pending uploads)
+          const SyncStatusIndicator(),
+          // Logout button - same color as Dashboard title
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
@@ -506,7 +701,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
             tooltip: 'Logout',
           ),
-          // Settings icon
+          // Settings icon - same color as Dashboard title
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -553,49 +748,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               const SizedBox(height: 24),
 
-              // Location label with loading indicator
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: ThemeHelper.getCardColor(context),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_isLocationLoading)
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            ThemeHelper.getPrimaryColor(context),
+              // Location label with loading indicator (CLICKABLE TO REFRESH)
+              GestureDetector(
+                onTap: _isLocationLoading ? null : () async {
+                  AppLogger.info('📍 User tapped location to refresh');
+                  // Check if location is disabled - if so, show dialog
+                  final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+                  if (!serviceEnabled) {
+                    AppLogger.info('📍 Location disabled, showing native dialog...');
+                    // Reset flag to allow dialog to show again
+                    SharedAppState.locationDialogShown = false;
+                    _showNativeLocationDialog();
+                  } else {
+                    // Location enabled - just refresh
+                    _getCurrentLocation(forceRefresh: true);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ThemeHelper.getCardColor(context),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isLocationLoading)
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              ThemeHelper.getPrimaryColor(context),
+                            ),
+                          ),
+                        )
+                      else
+                        Icon(
+                          Icons.location_on,
+                          color: ThemeHelper.getPrimaryColor(context),
+                          size: 16,
+                        ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _locationName,
+                          style: TextStyle(
+                            color: ThemeHelper.getTextColor(context),
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (!_isLocationLoading)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Icon(
+                            Icons.refresh,
+                            color: ThemeHelper.getSecondaryTextColor(context),
+                            size: 14,
                           ),
                         ),
-                      )
-                    else
-                      Icon(
-                        Icons.location_on,
-                        color: ThemeHelper.getPrimaryColor(context),
-                        size: 16,
-                      ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        _locationName,
-                        style: TextStyle(
-                          color: ThemeHelper.getTextColor(context),
-                          fontSize: 14,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
 
