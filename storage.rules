@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// No Storage paths are used by the app today: firebase_storage is declared in
+// pubspec.yaml but has zero call sites in lib/ (verified by grep). Lock the
+// bucket down entirely; open a scoped path (e.g. /profile_photos/{uid}) when
+// a feature actually needs it.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

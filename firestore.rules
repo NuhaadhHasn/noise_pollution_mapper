@@ -1,0 +1,49 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Community noise readings: readable by any signed-in user (community
+    // map / feed / heatmap / dashboard count are cross-user by design),
+    // writable only for your own documents.
+    match /noise_readings/{readingId} {
+      allow read: if isSignedIn();
+
+      // Create: the document must be stamped with the caller's uid.
+      allow create: if isSignedIn()
+        && request.resource.data.userId is string
+        && request.resource.data.userId == request.auth.uid;
+
+      // Update/delete: only the current owner. NOTE: ownership is checked
+      // against the EXISTING doc (resource.data), which deliberately permits
+      // the delete-account anonymization flow
+      // (settings_screen_enhanced.dart:893-901) that rewrites userId to
+      // 'deleted_user_<prefix>' — after which no one can modify the doc.
+      // It also keeps the idempotent offline-sync retry working: a repeated
+      // set() on an already-committed doc is an UPDATE, not a create.
+      allow update, delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // User profiles: owner-only (created at registration,
+    // registration_screen.dart:57-74; edited in edit_profile_screen.dart).
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Donation display config (cluster 01 Step 4): read-only, authenticated.
+    match /app_config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Everything else is locked.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
