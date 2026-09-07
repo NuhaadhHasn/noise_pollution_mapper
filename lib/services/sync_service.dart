@@ -22,6 +22,7 @@ class SyncService {
   bool _isOnline = false;
   bool _isSyncing = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<User?>? _authSubscription;
 
   // Sync configuration
   static const int maxSyncAttempts = 3;
@@ -62,6 +63,21 @@ class SyncService {
 
       _isInitialized = true;
       AppLogger.info('[SyncService] Initialized successfully');
+
+      // offline-3: a fresh launch that is already online never fires an
+      // offline→online transition, and neither does signing in. Listen to
+      // auth state (fires immediately with the current user, including the
+      // restored session at startup) and sync when a user is present.
+      _authSubscription = _auth.authStateChanges().listen(_onAuthStateChanged);
+
+      // Belt-and-braces startup check for the case where auth restore has
+      // already completed before this listener attaches.
+      if (_isOnline && _storage.getPendingCount() > 0) {
+        AppLogger.info(
+          '[SyncService] Startup: pending recordings found while online. Starting sync...',
+        );
+        unawaited(syncOfflineRecordings());
+      }
       return true;
     } catch (e) {
       AppLogger.error('[SyncService] Initialization failed', e);
@@ -103,6 +119,28 @@ class SyncService {
         '[SyncService] Found $pendingCount pending recordings. Starting sync...',
       );
       await syncOfflineRecordings();
+    }
+  }
+
+  /// Sync pending recordings when a user signs in (offline-3). The stream
+  /// also fires once on listen with the restored session, covering startup.
+  void _onAuthStateChanged(User? user) {
+    if (user == null) return;
+    if (_isOnline && _storage.getPendingCount() > 0) {
+      AppLogger.info(
+        '[SyncService] User ${user.uid} signed in with pending recordings. Starting sync...',
+      );
+      unawaited(syncOfflineRecordings());
+    }
+  }
+
+  /// Called by FirebaseService after a recording was queued although the
+  /// device believes it is online (fallback save after a failed direct
+  /// write, offline-3). Kicks a sync instead of waiting for the next
+  /// offline→online transition.
+  void notifyQueued() {
+    if (_isInitialized && _isOnline && !_isSyncing) {
+      unawaited(syncOfflineRecordings());
     }
   }
 
@@ -332,6 +370,7 @@ class SyncService {
   /// Dispose resources
   void dispose() {
     _connectivitySubscription?.cancel();
+    _authSubscription?.cancel();
     _storage.close();
     _isInitialized = false;
     AppLogger.info('[SyncService] Disposed');

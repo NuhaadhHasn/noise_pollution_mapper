@@ -4,6 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../utils/app_logger.dart';
 import '../models/offline_recording.dart';
 import 'offline_storage_service.dart';
+import 'sync_service.dart';
 
 class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -84,6 +85,10 @@ class FirebaseService {
             userId: user.uid,
           );
           AppLogger.info('[FirebaseService] Saved to offline queue (fallback): $decibelLevel dB');
+          // offline-3: the device thinks it is online (the direct write just
+          // failed transiently) — kick a sync now rather than waiting for the
+          // next offline→online transition. Bounded by maxSyncAttempts.
+          SyncService().notifyQueued();
         }
       } catch (fallbackError) {
         AppLogger.error('[FirebaseService] Fallback offline save also failed', fallbackError);
