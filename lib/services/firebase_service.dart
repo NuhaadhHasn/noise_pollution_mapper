@@ -156,6 +156,8 @@ class FirebaseService {
       confidence: confidence,
       syncAttempts: 0,
       isSynced: false,
+      userId: userId,
+      userEmail: _auth.currentUser?.email,
     );
 
     await _offlineStorage.saveOfflineRecording(recording);

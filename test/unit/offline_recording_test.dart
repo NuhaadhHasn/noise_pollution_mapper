@@ -67,4 +67,69 @@ void main() {
       expect(rec.timestamp, DateTime(2026, 7, 1, 8, 30));
     });
   });
+
+  group('OfflineRecording userId/userEmail', () {
+    test('stored userId and userEmail survive the toMap/fromMap round trip',
+        () {
+      final original = OfflineRecording(
+        id: '1700000000002_userC',
+        decibelLevel: 61.0,
+        latitude: 3.0,
+        longitude: 4.0,
+        timestamp: DateTime(2026, 7, 3),
+        userId: 'userC',
+        userEmail: 'c@example.com',
+      );
+
+      final restored = OfflineRecording.fromMap(
+        Map<dynamic, dynamic>.from(original.toMap()),
+      );
+      expect(restored.userId, 'userC');
+      expect(restored.userEmail, 'c@example.com');
+    });
+
+    test('legacy entry without userId falls back to parsing the id suffix',
+        () {
+      final legacy = <dynamic, dynamic>{
+        'id': '1700000000000_abc123XYZ',
+        'decibelLevel': 70.0,
+        'latitude': 1.0,
+        'longitude': 2.0,
+        'locationName': null,
+        'timestamp': DateTime(2026, 7, 1),
+        'syncAttempts': 0,
+        'isSynced': false,
+        // no userId / userEmail keys at all
+      };
+
+      final rec = OfflineRecording.fromMap(legacy);
+      expect(rec.userId, 'abc123XYZ');
+      expect(rec.userEmail, isNull);
+    });
+
+    test('stored userId wins over the id-suffix fallback', () {
+      final map = <dynamic, dynamic>{
+        'id': '1700000000000_wrongUser',
+        'decibelLevel': 70.0,
+        'latitude': 1.0,
+        'longitude': 2.0,
+        'timestamp': DateTime(2026, 7, 1),
+        'userId': 'rightUser',
+        'isSynced': false,
+      };
+      expect(OfflineRecording.fromMap(map).userId, 'rightUser');
+    });
+
+    test('malformed legacy id yields null userId (never a wrong owner)', () {
+      final map = <dynamic, dynamic>{
+        'id': 'no-separator-here',
+        'decibelLevel': 70.0,
+        'latitude': 1.0,
+        'longitude': 2.0,
+        'timestamp': DateTime(2026, 7, 1),
+        'isSynced': false,
+      };
+      expect(OfflineRecording.fromMap(map).userId, isNull);
+    });
+  });
 }
