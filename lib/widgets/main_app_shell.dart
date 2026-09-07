@@ -7,6 +7,7 @@ import '../screens/dashboard_screen.dart';
 import '../screens/history_screen.dart';
 import '../screens/settings_screen_enhanced.dart';
 import '../services/profile_sync_service.dart';
+import '../utils/shared_app_state.dart';
 import 'shared_bottom_navbar.dart';
 
 class MainAppShell extends StatefulWidget {
@@ -25,6 +26,9 @@ class _MainAppShellState extends State<MainAppShell> {
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
+    // dash-6 (cluster 05): publish the initial tab so IndexedStack children
+    // (which stay mounted when hidden) can react to being shown/hidden.
+    SharedAppState.currentTabIndex.value = widget.initialIndex;
     // settings-9/flow6-06: if the user completed an email-change
     // verification since last launch, copy the now-verified Auth email
     // onto their Firestore documents. Fire-and-forget; never blocks UI.
@@ -54,6 +58,11 @@ class _MainAppShellState extends State<MainAppShell> {
         bottomNavigationBar: SharedBottomNavBar(
           currentIndex: _currentIndex,
           onTap: (index) {
+            // dash-6 (cluster 05): MUST stay here — the Dashboard listens to
+            // this notifier to stop recording when it is hidden by a tab
+            // switch. Removing it is an invisible regression (no analyzer
+            // error, no test failure).
+            SharedAppState.currentTabIndex.value = index;
             setState(() {
               _currentIndex = index;
             });

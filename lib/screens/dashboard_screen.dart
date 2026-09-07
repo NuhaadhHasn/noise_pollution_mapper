@@ -67,6 +67,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // on this flag so the hardcoded Colombo default above is never persisted.
   bool _hasRealLocation = false;
 
+  // dash-6: timestamp of the last NoiseReading delivered by the meter stream.
+  // The save timer refuses to persist _currentDb if the stream has stalled.
+  DateTime? _lastNoiseReadingAt;
+
+  // dash-6: Dashboard's index in MainAppShell's IndexedStack
+  // (Map=0, Analytics=1, Dashboard=2, History=3, Settings=4).
+  static const int _dashboardTabIndex = 2;
+
   // Timer for periodic Firebase saves (don't save every reading, save every 5 seconds)
   Timer? _saveTimer;
 
@@ -99,6 +107,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // dash-6: the IndexedStack keeps this screen mounted when the user
+    // switches tabs, so dispose() never fires - listen for tab changes.
+    SharedAppState.currentTabIndex.addListener(_onShellTabChanged);
     _initializeAudioRecorder();
     _requestPermissions();
     // Call location immediately (no delay - delay causes race condition)
@@ -106,9 +117,26 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     AppLogger.debug('User ID: ${FirebaseAuth.instance.currentUser?.uid}');
   }
 
+  // dash-6: invoked whenever MainAppShell switches tabs
+  void _onShellTabChanged() {
+    if (widget.isInAppShell &&
+        SharedAppState.currentTabIndex.value != _dashboardTabIndex &&
+        _isRecording) {
+      AppLogger.info('Dashboard hidden by tab switch, stopping recording');
+      _stopRecording();
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    // dash-6: recording must not continue invisibly in the background
+    if ((state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden) &&
+        _isRecording) {
+      AppLogger.info('App backgrounded while recording, stopping recording');
+      _stopRecording();
+    }
     // When user returns from settings (app resumes), check if location is now enabled
     if (state == AppLifecycleState.resumed) {
       AppLogger.info('📍 App resumed, checking if location was enabled...');
@@ -401,6 +429,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _classificationTimer = null;
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
+      _lastNoiseReadingAt = null;
 
       // CRITICAL: if the audio recorder is somehow still running, stop it
       // directly. Do NOT call _stopRecording() here - it would reset the
@@ -427,6 +456,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _noiseSubscription = _noiseMeter?.noise.listen(
         (NoiseReading reading) {
           if (!_isRecording || !mounted) return;
+          // dash-6: record stream liveness for the save timer's stall check
+          _lastNoiseReadingAt = DateTime.now();
           
           setState(() {
             // Apply calibration offset for phone microphone
@@ -535,6 +566,18 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         if (!_hasRealLocation) {
           AppLogger.warning(
             'Skipping reading save: no real GPS fix yet (refusing to save default coordinates)',
+          );
+          return;
+        }
+
+        // dash-6: if the meter stream has stalled, _currentDb is frozen -
+        // do not keep re-saving it as fresh data.
+        final lastReading = _lastNoiseReadingAt;
+        if (lastReading == null ||
+            DateTime.now().difference(lastReading) >
+                const Duration(seconds: 6)) {
+          AppLogger.warning(
+            'Skipping reading save: noise stream stalled (no reading in >6s)',
           );
           return;
         }
@@ -742,6 +785,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   void dispose() {
     _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
+    SharedAppState.currentTabIndex.removeListener(_onShellTabChanged);
     _stopRecording();
     _audioRecorder?.closeRecorder();
     // Don't reset locationDialogShown - it's static and shared across app lifetime
