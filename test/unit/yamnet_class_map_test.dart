@@ -47,4 +47,57 @@ void main() {
       expect(names.contains('Forest ambience'), isFalse);
     });
   });
+
+  group('classMapping audit against official names (ml-1)', () {
+    setUpAll(() async {
+      await YAMNetClassMapping.loadOfficialClassMap();
+    });
+
+    // Generic non-official keys intentionally kept because the
+    // partial-match fallback in getCategoryFromClassName uses them as
+    // substring helpers for real names. Do not grow this list.
+    const allowedHelperKeys = {
+      'Revving', 'Accelerating', 'Brake', 'Scooter', 'Small engine',
+      'Hammering', 'Machine', 'Machinery', 'Industrial noise', 'Motor',
+      'Male speech, man speaking', 'Female speech, woman speaking',
+      'Battle cry', 'String instrument', 'Tuba', 'Cowbell (instrument)',
+      'Music genre', 'Country music', 'Prayer',
+      'Domestic sounds, home sounds', 'Mechanical pencil', 'Clock alarm',
+      'Auto rickshaw', 'Go-kart', 'Hiss (cat)', 'Lightning', 'Breeze',
+      'Gust', 'Roaring', 'Environmental sounds', 'Bay', 'Pop', 'Thump',
+    };
+
+    test('no fabricated class names remain in classMapping', () {
+      final official = YAMNetClassMapping.indexToClassName.values.toSet();
+      final nonOfficial = YAMNetClassMapping.classMapping.keys
+          .where((k) => !official.contains(k))
+          .toSet();
+      expect(
+        nonOfficial.difference(allowedHelperKeys),
+        isEmpty,
+        reason: 'classMapping contains non-official class names',
+      );
+    });
+
+    test('high-impact official names resolve to the right category', () {
+      expect(YAMNetClassMapping.getCategoryFromClassName('Siren'),
+          equals('Traffic'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Alarm'),
+          equals('Alarm'));
+      expect(
+          YAMNetClassMapping.getCategoryFromClassName('Boat, Water vehicle'),
+          equals('Transport'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Rain'),
+          equals('Weather'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Explosion'),
+          equals('Construction'));
+      expect(
+          YAMNetClassMapping.getCategoryFromClassName('Inside, small room'),
+          equals('Other'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Silence'),
+          equals('Other'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Basketball bounce'),
+          equals('Sports'));
+    });
+  });
 }
