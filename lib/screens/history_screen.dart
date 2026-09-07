@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../theme/app_theme.dart';
 import '../utils/animations.dart';
+import '../utils/csv_builder.dart';
 import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
 import 'report_noise_screen.dart';
@@ -215,9 +217,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  // Export data to CSV
+  // Export data to CSV — current user's readings only (fb-4/uiux-3), fetched
+  // page-by-page through the composite index (userId ASC, timestamp DESC),
+  // CSV assembled on a background isolate (perf-5).
   Future<void> _exportDataToCSV(BuildContext context) async {
     try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please sign in to export your data')),
+        );
+        return;
+      }
+
       // Show loading
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -226,13 +238,49 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
       );
 
-      // Get all readings from Firebase
-      final snapshot = await FirebaseFirestore.instance
-          .collection('noise_readings')
-          .orderBy('timestamp', descending: true)
-          .get();
+      // Fetch ONLY this user's readings, page by page.
+      // userId isEqualTo + orderBy timestamp desc == the one composite index.
+      const int exportPageSize = 500;
+      final rows = <Map<String, Object?>>[];
+      DocumentSnapshot? cursor;
+      while (true) {
+        final snapshot = await _firebaseService.getUserReadingsPaginated(
+          userId: userId,
+          limit: exportPageSize,
+          startAfter: cursor,
+        );
 
-      if (snapshot.docs.isEmpty) {
+        for (final doc in snapshot.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+
+          // Readers handle both server timestamp and client createdAt.
+          final createdAtRaw = data['createdAt'];
+          final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ??
+              (createdAtRaw is Timestamp ? createdAtRaw.toDate() : null);
+
+          final confidence = data['confidence'];
+          rows.add({
+            'timestamp': timestamp != null
+                ? DateFormat('yyyy-MM-dd HH:mm:ss').format(timestamp)
+                : 'N/A',
+            'location': data['locationName'] as String? ?? 'Unknown',
+            'latitude': data['latitude'] ?? 0.0,
+            'longitude': data['longitude'] ?? 0.0,
+            'decibelLevel': data['decibelLevel'] ?? 0.0,
+            'soundClass': data['soundClass'] as String? ?? 'N/A',
+            'soundType': data['soundType'] as String? ?? 'N/A',
+            'confidence': confidence is num
+                ? (confidence * 100).toStringAsFixed(1)
+                : 'N/A',
+            'device': data['deviceInfo'] as String? ?? 'N/A',
+          });
+        }
+
+        if (snapshot.docs.length < exportPageSize) break;
+        cursor = snapshot.docs.last;
+      }
+
+      if (rows.isEmpty) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('No data to export')),
@@ -241,44 +289,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
         return;
       }
 
-      // Create CSV content
-      StringBuffer csvData = StringBuffer();
-
-      // CSV Header (includes sound classification fields)
-      csvData.writeln('Timestamp,Location,Latitude,Longitude,Decibel Level (dB),Sound Classification,Sound Type,Confidence (%),User Email,Device');
-
-      // Add data rows
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
-        final timestampStr = timestamp != null
-            ? DateFormat('yyyy-MM-dd HH:mm:ss').format(timestamp)
-            : 'N/A';
-
-        final location = data['locationName'] ?? 'Unknown';
-        final lat = data['latitude'] ?? 0.0;
-        final lng = data['longitude'] ?? 0.0;
-        final db = data['decibelLevel'] ?? 0.0;
-        final email = data['userEmail'] ?? 'N/A';
-        final device = data['deviceInfo'] ?? 'N/A';
-
-        // Sound classification data (may be null for older records)
-        final soundClass = data['soundClass'] ?? 'N/A';
-        final soundType = data['soundType'] ?? 'N/A';
-        final confidence = data['confidence'];
-        final confidenceStr = confidence != null
-            ? (confidence * 100).toStringAsFixed(1)
-            : 'N/A';
-
-        csvData.writeln('$timestampStr,"$location",$lat,$lng,$db,"$soundClass","$soundType",$confidenceStr,$email,$device');
-      }
+      // Build the CSV off the UI thread (perf-5)
+      final csv = await compute(buildNoiseCsv, rows);
 
       // Save to file
       final directory = await getApplicationDocumentsDirectory();
-      final fileName = 'noise_pollution_data_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.csv';
+      final fileName =
+          'noise_pollution_data_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.csv';
       final file = File('${directory.path}/$fileName');
 
-      await file.writeAsString(csvData.toString());
+      await file.writeAsString(csv);
 
       // Success message
       if (context.mounted) {
@@ -292,7 +312,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Exported ${snapshot.docs.length} recordings',
+                  'Exported ${rows.length} recordings',
                   style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
                 ),
                 const SizedBox(height: 12),
