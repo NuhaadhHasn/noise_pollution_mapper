@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../utils/theme_helper.dart';
+import 'login_screen.dart';
 import 'onboarding_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -32,14 +34,21 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     // Start animation
     _animationController.forward();
 
-    // Navigate after 3 seconds
-    Timer(const Duration(seconds: 3), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const OnboardingScreen()),
-        );
-      }
-    });
+    // Navigate after 3 seconds. Onboarding is shown only until the user has
+    // completed it once (flow1-2); afterwards signed-out launches go to Login.
+    Timer(const Duration(seconds: 3), _navigateNext);
+  }
+
+  Future<void> _navigateNext() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasSeenOnboarding = prefs.getBool('has_seen_onboarding') ?? false;
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (context) =>
+            hasSeenOnboarding ? const LoginScreen() : const OnboardingScreen(),
+      ),
+    );
   }
 
   @override
