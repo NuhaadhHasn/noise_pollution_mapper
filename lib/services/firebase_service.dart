@@ -6,15 +6,22 @@ import '../models/offline_recording.dart';
 import 'offline_storage_service.dart';
 import 'sync_service.dart';
 
+/// Outcome of a noise-reading save attempt (fb-1).
+/// - [savedOnline]: written to Firestore.
+/// - [queuedOffline]: stored in the local Hive queue for later sync.
+/// - [failed]: nothing was persisted — callers MUST surface this to the user.
+enum SaveOutcome { savedOnline, queuedOffline, failed }
+
 class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final Connectivity _connectivity = Connectivity();
   final OfflineStorageService _offlineStorage = OfflineStorageService();
 
-  // Save noise reading to Firestore (with optional sound classification data)
-  // Automatically handles offline mode by queuing for later sync
-  Future<void> saveNoiseReading({
+  // Save noise reading to Firestore (with optional sound classification data).
+  // Automatically handles offline mode by queuing for later sync.
+  // Never throws — returns a SaveOutcome the caller must check (fb-1).
+  Future<SaveOutcome> saveNoiseReading({
     required double decibelLevel,
     required double latitude,
     required double longitude,
@@ -23,25 +30,26 @@ class FirebaseService {
     String? soundType,
     double? confidence,
   }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      AppLogger.warning('[FirebaseService] No user logged in, cannot save');
+      return SaveOutcome.failed;
+    }
+
+    // Check connectivity with error handling
+    bool isOnline = false;
     try {
-      final user = _auth.currentUser;
-      if (user == null) {
-        AppLogger.warning('[FirebaseService] No user logged in, cannot save');
-        return;
-      }
+      final connectivityResult = await _connectivity.checkConnectivity();
+      isOnline = _isConnectedToInternet(connectivityResult);
+    } catch (e) {
+      // If connectivity check fails, assume offline
+      AppLogger.warning(
+          '[FirebaseService] Connectivity check failed, assuming offline: $e');
+      isOnline = false;
+    }
 
-      // Check connectivity with error handling
-      bool isOnline = false;
+    if (isOnline) {
       try {
-        final connectivityResult = await _connectivity.checkConnectivity();
-        isOnline = _isConnectedToInternet(connectivityResult);
-      } catch (e) {
-        // If connectivity check fails, assume offline
-        AppLogger.warning('[FirebaseService] Connectivity check failed, assuming offline: $e');
-        isOnline = false;
-      }
-
-      if (isOnline) {
         // ONLINE: Save directly to Firebase
         await _saveToFirebase(
           decibelLevel: decibelLevel,
@@ -53,46 +61,41 @@ class FirebaseService {
           confidence: confidence,
           userId: user.uid,
         );
-        AppLogger.info('[FirebaseService] Saved reading to Firebase: $decibelLevel dB');
-      } else {
-        // OFFLINE: Save to Hive queue for later sync
-        await _saveOffline(
-          decibelLevel: decibelLevel,
-          latitude: latitude,
-          longitude: longitude,
-          locationName: locationName,
-          soundClass: soundClass,
-          soundType: soundType,
-          confidence: confidence,
-          userId: user.uid,
-        );
-        AppLogger.warning('[FirebaseService] Offline! Queued reading for later sync: $decibelLevel dB');
+        AppLogger.info(
+            '[FirebaseService] Saved reading to Firebase: $decibelLevel dB');
+        return SaveOutcome.savedOnline;
+      } catch (e) {
+        AppLogger.error(
+            '[FirebaseService] Online save failed, falling back to offline queue',
+            e);
+        // Fall through to the offline queue below.
       }
+    }
+
+    // OFFLINE (or online save failed): queue in Hive for later sync
+    try {
+      await _saveOffline(
+        decibelLevel: decibelLevel,
+        latitude: latitude,
+        longitude: longitude,
+        locationName: locationName,
+        soundClass: soundClass,
+        soundType: soundType,
+        confidence: confidence,
+        userId: user.uid,
+      );
+      AppLogger.warning(
+          '[FirebaseService] Queued reading for later sync: $decibelLevel dB');
+      // offline-3: if the device believes it is online (a direct write just
+      // failed transiently) kick a sync now rather than waiting for the next
+      // offline→online transition. notifyQueued() self-guards on
+      // _isInitialized && _isOnline && !_isSyncing, so this is a no-op on the
+      // genuinely-offline path. Bounded by maxSyncAttempts.
+      SyncService().notifyQueued();
+      return SaveOutcome.queuedOffline;
     } catch (e) {
-      AppLogger.error('[FirebaseService] Error saving reading', e);
-      // Fallback: Save offline even if online save failed
-      try {
-        final user = _auth.currentUser;
-        if (user != null) {
-          await _saveOffline(
-            decibelLevel: decibelLevel,
-            latitude: latitude,
-            longitude: longitude,
-            locationName: locationName,
-            soundClass: soundClass,
-            soundType: soundType,
-            confidence: confidence,
-            userId: user.uid,
-          );
-          AppLogger.info('[FirebaseService] Saved to offline queue (fallback): $decibelLevel dB');
-          // offline-3: the device thinks it is online (the direct write just
-          // failed transiently) — kick a sync now rather than waiting for the
-          // next offline→online transition. Bounded by maxSyncAttempts.
-          SyncService().notifyQueued();
-        }
-      } catch (fallbackError) {
-        AppLogger.error('[FirebaseService] Fallback offline save also failed', fallbackError);
-      }
+      AppLogger.error('[FirebaseService] Offline save also failed', e);
+      return SaveOutcome.failed;
     }
   }
 

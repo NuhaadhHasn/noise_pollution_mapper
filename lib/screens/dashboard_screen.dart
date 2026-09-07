@@ -73,6 +73,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // Track if we've already shown alert for current high noise session
   bool _hasShownHighNoiseAlert = false;
 
+  // Track if we've already surfaced a save failure for the current
+  // recording session (avoid a snackbar every 5 s) — fb-1
+  bool _hasShownSaveErrorSnackbar = false;
+
   // Sound Classification Results
   ClassificationResult? _currentClassification;
   bool _isClassifying = false;
@@ -482,24 +486,40 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
       setState(() {
         _isRecording = true;
+        _hasShownSaveErrorSnackbar = false;
       });
 
       // Start periodic Firebase saves (every 5 seconds)
       _saveTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
         // CRITICAL: Stop if not recording (prevents timer leak)
         if (!_isRecording || !mounted) return;
-        
+
         if (_currentDb > 0 && _currentDb.isFinite) {
-          _firebaseService.saveNoiseReading(
-            decibelLevel: _currentDb,
-            latitude: _latitude,
-            longitude: _longitude,
-            locationName: _locationName,
-            // Include classification data if available
-            soundClass: _currentClassification?.category,
-            soundType: _currentClassification?.soundType,
-            confidence: _currentClassification?.confidence,
-          );
+          _firebaseService
+              .saveNoiseReading(
+                decibelLevel: _currentDb,
+                latitude: _latitude,
+                longitude: _longitude,
+                locationName: _locationName,
+                // Include classification data if available
+                soundClass: _currentClassification?.category,
+                soundType: _currentClassification?.soundType,
+                confidence: _currentClassification?.confidence,
+              )
+              .then((outcome) {
+            if (outcome == SaveOutcome.failed &&
+                mounted &&
+                !_hasShownSaveErrorSnackbar) {
+              _hasShownSaveErrorSnackbar = true;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                      'Could not save readings — recording data is NOT being stored.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          });
         }
       });
 

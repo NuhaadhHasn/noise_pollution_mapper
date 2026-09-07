@@ -221,7 +221,7 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
       }
 
       // Save to Firebase with sound classification
-      await _firebaseService.saveNoiseReading(
+      final outcome = await _firebaseService.saveNoiseReading(
         decibelLevel: _manualDb,
         latitude: _latitude,
         longitude: _longitude,
@@ -232,15 +232,35 @@ class _ReportNoiseScreenState extends State<ReportNoiseScreen> with WidgetsBindi
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Noise report submitted successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Go back to Dashboard
-        Navigator.pop(context);
+        switch (outcome) {
+          case SaveOutcome.savedOnline:
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Noise report submitted successfully!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            // Go back to Dashboard
+            Navigator.pop(context);
+          case SaveOutcome.queuedOffline:
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                    'No connection — report saved locally and will sync automatically.'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            // Go back to Dashboard
+            Navigator.pop(context);
+          case SaveOutcome.failed:
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Could not save the report. Please try again.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          // Stay on the screen so the user can retry.
+        }
       }
     } catch (e) {
       if (mounted) {
