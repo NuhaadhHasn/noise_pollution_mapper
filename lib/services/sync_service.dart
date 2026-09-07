@@ -175,11 +175,19 @@ class SyncService {
           // Save to Firebase under the recording owner's uid
           await _saveToFirebase(recording, ownerId);
 
-          // Mark as synced in local storage
-          await _storage.markAsSynced(recording.id);
-          syncedCount++;
-
-          AppLogger.info('[SyncService] Successfully synced: ${recording.id}');
+          // Mark as synced in local storage. Only count it if the local
+          // mark succeeded; otherwise it stays queued and the retry is
+          // harmless because the upload is idempotent (same doc ID).
+          final marked = await _storage.markAsSynced(recording.id);
+          if (marked) {
+            syncedCount++;
+            AppLogger.info('[SyncService] Successfully synced: ${recording.id}');
+          } else {
+            AppLogger.warning(
+              '[SyncService] Uploaded ${recording.id} but failed to mark it '
+              'synced locally; it will be retried idempotently',
+            );
+          }
         } catch (e) {
           // Update sync attempts
           final newAttempts = recording.syncAttempts + 1;
@@ -244,7 +252,10 @@ class SyncService {
       data['confidence'] = recording.confidence;
     }
 
-    await _firestore.collection('noise_readings').add(data);
+    // Deterministic document ID (offline-4/flow5-3): recording.id is unique
+    // per reading, so a retry after a lost ack overwrites the same document
+    // instead of creating a duplicate.
+    await _firestore.collection('noise_readings').doc(recording.id).set(data);
   }
 
   /// Manually trigger sync (user-initiated)
