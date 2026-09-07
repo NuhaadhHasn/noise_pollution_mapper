@@ -8,6 +8,7 @@ import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'widgets/main_app_shell.dart';
+import 'widgets/startup_error_app.dart';
 import 'services/notification_service.dart';
 import 'services/sound_classification_service.dart';
 import 'services/sync_service.dart';
@@ -24,41 +25,75 @@ final ValueNotifier<Color> themeColorNotifier = ValueNotifier<Color>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _bootstrap();
+}
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+/// Guarded startup (audit boot-1 / flow1-1): a fatal init failure shows a
+/// retryable error screen instead of a permanent blank screen. Retries are
+/// safe: Firebase.initializeApp is skipped once an app instance exists.
+Future<void> _bootstrap() async {
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
 
-  // Enable offline persistence for Firestore
-  FirebaseFirestore.instance.settings = const Settings(
-    persistenceEnabled: true, // Cache data locally
-    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED, // Unlimited cache
-  );
+    // Enable offline persistence for Firestore
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true, // Cache data locally
+      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED, // Unlimited cache
+    );
 
-  // Initialize notifications
-  await NotificationService.initialize();
-  await NotificationService.requestPermission();
+    await _initializeOptionalServices();
 
-  // Initialize Sync Service for offline mode (Phase 1: Offline Mode)
-  await SyncService().initialize();
-  AppLogger.info('[Main] SyncService initialized for offline mode');
+    runApp(const MyApp());
+  } catch (e, stackTrace) {
+    AppLogger.error('[Main] Fatal startup failure', e, stackTrace);
+    runApp(StartupErrorApp(error: e, onRetry: _bootstrap));
+  }
+}
 
-  // Load saved theme preferences
-  final prefs = await SharedPreferences.getInstance();
-  final isDarkMode = prefs.getBool('dark_mode') ?? true;
-  themeNotifier.value = isDarkMode ? ThemeMode.dark : ThemeMode.light;
-
-  // Load saved theme color
-  final savedColorValue = prefs.getInt('theme_color');
-  if (savedColorValue != null) {
-    themeColorNotifier.value = Color(savedColorValue);
+/// Non-fatal startup work: a failure here degrades one feature but must
+/// never block boot.
+Future<void> _initializeOptionalServices() async {
+  try {
+    // Initialize notifications
+    await NotificationService.initialize();
+    await NotificationService.requestPermission();
+  } catch (e, stackTrace) {
+    AppLogger.error('[Main] Notification init failed (non-fatal)', e, stackTrace);
   }
 
+  try {
+    // Initialize Sync Service for offline mode (Phase 1: Offline Mode)
+    await SyncService().initialize();
+    AppLogger.info('[Main] SyncService initialized for offline mode');
+  } catch (e, stackTrace) {
+    AppLogger.error('[Main] SyncService init failed (non-fatal)', e, stackTrace);
+  }
+
+  try {
+    // Load saved theme preferences
+    final prefs = await SharedPreferences.getInstance();
+    final isDarkMode = prefs.getBool('dark_mode') ?? true;
+    themeNotifier.value = isDarkMode ? ThemeMode.dark : ThemeMode.light;
+
+    // Load saved theme color
+    final savedColorValue = prefs.getInt('theme_color');
+    if (savedColorValue != null) {
+      themeColorNotifier.value = Color(savedColorValue);
+    }
+  } catch (e, stackTrace) {
+    AppLogger.error('[Main] Theme preference load failed (non-fatal)', e, stackTrace);
+  }
+
+  // Both helpers below are already internally try/catch-guarded.
   // Test TFLite model loading (Step 1-3: Sound Classification)
   await _testModelLoading();
 
   // Initialize Sound Classification Service (Step 5: Sound Classification)
   await _initializeSoundClassification();
-
-  runApp(const MyApp());
 }
 
 /// Test function to verify YAMNet TFLite model loads correctly
