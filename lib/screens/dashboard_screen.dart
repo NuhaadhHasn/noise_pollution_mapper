@@ -60,6 +60,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   double _avgDb = 0.0;
   final List<double> _dbHistory = [];
 
+  // perf-2: live meter values are published through notifiers instead of
+  // setState, so only the gauge / stats row / chart subtrees rebuild on the
+  // several-per-second NoiseReading events - not the whole dashboard.
+  final ValueNotifier<double> _currentDbNotifier = ValueNotifier<double>(0.0);
+  final ValueNotifier<int> _historyVersion = ValueNotifier<int>(0);
+
   // Location tracking
   String _locationName = 'Fetching location...';
   double _latitude = 6.9271; // Colombo default
@@ -485,65 +491,71 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           if (!_isRecording || !mounted) return;
           // dash-6: record stream liveness for the save timer's stall check
           _lastNoiseReadingAt = DateTime.now();
-          
-          setState(() {
-            // Apply calibration offset for phone microphone
-            // Phone mics read 10-20 dB higher than actual SPL
-            // This offset adjusts readings to realistic environmental values:
-            // - Quiet room: 30-40 dB (was showing 10-20 dB)
-            // - Normal conversation: 60-70 dB (was showing 30-50 dB)
-            // - Loud speech: 80-90 dB (was showing 50-60 dB)
-            // - Traffic: 70-85 dB
-            const double calibrationOffset = 10.0;
-            final rawDb = reading.meanDecibel - calibrationOffset;
-            
-            // Validate dB range (filter unrealistic values)
-            // Environmental sounds typically range from 20-120 dB
-            if (rawDb < 10 || rawDb > 130) {
-              AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
-              return; // Don't add invalid readings
+
+          // perf-2: no setState here. Values are published through
+          // _currentDbNotifier / _historyVersion so only the gauge, stats
+          // row, and chart subtrees rebuild per reading.
+
+          // Apply calibration offset for phone microphone
+          // Phone mics read 10-20 dB higher than actual SPL
+          // This offset adjusts readings to realistic environmental values:
+          // - Quiet room: 30-40 dB (was showing 10-20 dB)
+          // - Normal conversation: 60-70 dB (was showing 30-50 dB)
+          // - Loud speech: 80-90 dB (was showing 50-60 dB)
+          // - Traffic: 70-85 dB
+          const double calibrationOffset = 10.0;
+          final rawDb = reading.meanDecibel - calibrationOffset;
+
+          // Validate dB range (filter unrealistic values)
+          // Environmental sounds typically range from 20-120 dB
+          if (rawDb < 10 || rawDb > 130) {
+            AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
+            return; // Don't add invalid readings
+          }
+
+          _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
+          _currentDbNotifier.value = _currentDb;
+
+          // Add to history (only valid values)
+          if (_currentDb.isFinite && _currentDb > 0) {
+            _dbHistory.add(_currentDb);
+            if (_dbHistory.length > 100) {
+              _dbHistory.removeAt(0); // Keep last 100 readings
             }
-            
-            _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
 
-            // Add to history (only valid values)
-            if (_currentDb.isFinite && _currentDb > 0) {
-              _dbHistory.add(_currentDb);
-              if (_dbHistory.length > 100) {
-                _dbHistory.removeAt(0); // Keep last 100 readings
-              }
+            // Update min, max, and average
+            if (_currentDb > _maxDb) _maxDb = _currentDb;
 
-              // Update min, max, and average
-              if (_currentDb > _maxDb) _maxDb = _currentDb;
-
-              // Set minDb to first reading if still infinity
-              if (_minDb == double.infinity) {
-                _minDb = _currentDb;
-              } else if (_currentDb < _minDb) {
-                _minDb = _currentDb;
-              }
-
-              // dash-1: energy-based average (Leq), not arithmetic dB mean
-              if (_dbHistory.isNotEmpty) {
-                _avgDb = NoiseStats.energyMeanDb(_dbHistory);
-              }
-
-              // flow6-04/settings-4: threshold + toggle come from user
-              // settings, not hardcoded values
-              if (_highNoiseAlertsEnabled &&
-                  _currentDb > _alertThresholdDb &&
-                  !_hasShownHighNoiseAlert) {
-                NotificationService.showHighNoiseAlert(_currentDb);
-                _hasShownHighNoiseAlert =
-                    true; // Only alert once per recording session
-              }
-
-              // Reset alert flag once noise drops 5 dB below the threshold
-              if (_currentDb < _alertThresholdDb - 5) {
-                _hasShownHighNoiseAlert = false;
-              }
+            // Set minDb to first reading if still infinity
+            if (_minDb == double.infinity) {
+              _minDb = _currentDb;
+            } else if (_currentDb < _minDb) {
+              _minDb = _currentDb;
             }
-          });
+
+            // dash-1: energy-based average (Leq), not arithmetic dB mean
+            if (_dbHistory.isNotEmpty) {
+              _avgDb = NoiseStats.energyMeanDb(_dbHistory);
+            }
+
+            // perf-2: bump version so stats row + history chart rebuild
+            _historyVersion.value = _historyVersion.value + 1;
+
+            // flow6-04/settings-4: threshold + toggle come from user
+            // settings, not hardcoded values
+            if (_highNoiseAlertsEnabled &&
+                _currentDb > _alertThresholdDb &&
+                !_hasShownHighNoiseAlert) {
+              NotificationService.showHighNoiseAlert(_currentDb);
+              _hasShownHighNoiseAlert =
+                  true; // Only alert once per recording session
+            }
+
+            // Reset alert flag once noise drops 5 dB below the threshold
+            if (_currentDb < _alertThresholdDb - 5) {
+              _hasShownHighNoiseAlert = false;
+            }
+          }
         },
         onError: (error) {
           AppLogger.error('Noise meter stream error', error);
@@ -818,6 +830,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     SharedAppState.currentTabIndex.removeListener(_onShellTabChanged);
     _stopRecording();
     _audioRecorder?.closeRecorder();
+    _currentDbNotifier.dispose();
+    _historyVersion.dispose();
     // Don't reset locationDialogShown - it's static and shared across app lifetime
     super.dispose();
   }
@@ -908,20 +922,29 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
               const SizedBox(height: 32),
 
-              // Min, Avg, Max values row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildStatCard('MIN', _minDb, Icons.arrow_downward),
-                  _buildStatCard('AVG', _avgDb, Icons.show_chart),
-                  _buildStatCard('MAX', _maxDb, Icons.arrow_upward),
-                ],
+              // Min, Avg, Max values row (perf-2: rebuilds per reading via
+              // _historyVersion, not via whole-screen setState)
+              ValueListenableBuilder<int>(
+                valueListenable: _historyVersion,
+                builder: (context, _, _) => Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildStatCard('MIN', _minDb, Icons.arrow_downward),
+                    _buildStatCard('AVG', _avgDb, Icons.show_chart),
+                    _buildStatCard('MAX', _maxDb, Icons.arrow_upward),
+                  ],
+                ),
               ),
 
               const SizedBox(height: 32),
 
-              // Main Decibel Meter (Circular Gauge)
-              DecibelMeterGauge(currentDb: _currentDb, maxDb: 100),
+              // Main Decibel Meter (Circular Gauge) - perf-2: only this
+              // subtree rebuilds on live dB changes
+              ValueListenableBuilder<double>(
+                valueListenable: _currentDbNotifier,
+                builder: (context, db, _) =>
+                    DecibelMeterGauge(currentDb: db, maxDb: 100),
+              ),
 
               const SizedBox(height: 24),
 
@@ -1058,8 +1081,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
               const SizedBox(height: 32),
 
-              // Real-time noise history graph
-              NoiseHistoryChart(dbHistory: _dbHistory),
+              // Real-time noise history graph (perf-2: rebuilds per reading
+              // via _historyVersion)
+              ValueListenableBuilder<int>(
+                valueListenable: _historyVersion,
+                builder: (context, _, _) =>
+                    NoiseHistoryChart(dbHistory: _dbHistory),
+              ),
 
               const SizedBox(height: 24),
 
