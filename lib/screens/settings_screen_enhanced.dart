@@ -9,6 +9,7 @@ import 'edit_profile_screen.dart';
 import 'classification_guide_screen.dart';
 import 'donation_screen.dart';
 import '../utils/theme_helper.dart';
+import '../utils/firestore_batch_utils.dart';
 
 class SettingsScreenEnhanced extends StatefulWidget {
   final bool isInAppShell;
@@ -1023,12 +1024,13 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           .where('userId', isEqualTo: uid)
           .get();
 
-      // Delete all readings using batch delete
-      final batch = firestore.batch();
-      for (var doc in snapshot.docs) {
-        batch.delete(doc.reference);
-      }
-      await batch.commit();
+      // Delete all readings in chunked batches (arch-4/flow6-05: a single
+      // WriteBatch fails outright over 500 operations)
+      await FirestoreBatchUtils.applyInChunks(
+        firestore,
+        snapshot.docs.map((doc) => doc.reference).toList(),
+        (batch, ref) => batch.delete(ref),
+      );
 
       // Close loading dialog
       if (!mounted) return;
