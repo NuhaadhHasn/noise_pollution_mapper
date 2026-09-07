@@ -364,19 +364,45 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   // Start noise measurement
   void _startRecording() async {
-    try {
-      // CRITICAL: Check if already recording - prevent duplicate starts
-      if (_isRecording) {
-        AppLogger.warning('Already recording, ignoring start request');
-        return;
-      }
+    // CRITICAL (dash-2): check-and-set the guard SYNCHRONOUSLY, before any
+    // await. A second tap during async setup now returns here instead of
+    // starting a duplicate noise subscription + save timer.
+    if (_isRecording) {
+      AppLogger.warning('Already recording, ignoring start request');
+      return;
+    }
+    setState(() {
+      _isRecording = true;
+      _hasShownSaveErrorSnackbar = false;
+    });
 
-      // CRITICAL: Check if audio recorder is already running
+    try {
+      // Defensively cancel anything a previous session may have leaked
+      await _noiseSubscription?.cancel();
+      _noiseSubscription = null;
+      _saveTimer?.cancel();
+      _saveTimer = null;
+      _classificationTimer?.cancel();
+      _classificationTimer = null;
+      await _audioStreamSubscription?.cancel();
+      _audioStreamSubscription = null;
+
+      // CRITICAL: if the audio recorder is somehow still running, stop it
+      // directly. Do NOT call _stopRecording() here - it would reset the
+      // _isRecording flag we just set.
       if (_audioRecorder != null && _audioRecorder!.isRecording) {
         AppLogger.warning('Audio recorder already running, stopping first...');
-        _stopRecording(); // Don't await - it's void
-        // Small delay to ensure clean state
-        await Future.delayed(const Duration(milliseconds: 200));
+        try {
+          await _audioRecorder!.stopRecorder().timeout(
+            const Duration(seconds: 3),
+            onTimeout: () {
+              AppLogger.warning('stopRecorder() timed out during restart');
+              return; // Explicit return to satisfy nullable return type
+            },
+          );
+        } catch (e) {
+          AppLogger.error('Failed to stop stale audio recorder', e);
+        }
       }
 
       // Location already fetched on screen start, no need to request again
@@ -484,11 +510,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         AppLogger.debug('Started real audio capture at $_targetSampleRate Hz');
       }
 
-      setState(() {
-        _isRecording = true;
-        _hasShownSaveErrorSnackbar = false;
-      });
-
       // Start periodic Firebase saves (every 5 seconds)
       _saveTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
         // CRITICAL: Stop if not recording (prevents timer leak)
@@ -535,6 +556,22 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       });
     } catch (e) {
       AppLogger.error('Error starting recording', e);
+      // Roll back: tear down anything partially started and clear the flag
+      await _noiseSubscription?.cancel();
+      _noiseSubscription = null;
+      _saveTimer?.cancel();
+      _saveTimer = null;
+      _classificationTimer?.cancel();
+      _classificationTimer = null;
+      await _audioStreamSubscription?.cancel();
+      _audioStreamSubscription = null;
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _isRecording = false;
+        });
+      } else {
+        _isRecording = false;
+      }
     }
   }
 
