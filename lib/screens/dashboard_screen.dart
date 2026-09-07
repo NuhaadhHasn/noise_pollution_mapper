@@ -938,23 +938,41 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
-  // Build Community Feed Card with today's report count
-  Widget _buildCommunityFeedCard() {
-    // Get today's start and end timestamps
+  // Community-feed stream is cached so frequent rebuilds while recording do
+  // not open a brand-new Firestore listener each time (fb-5). Recreated only
+  // when the calendar day changes.
+  Stream<QuerySnapshot>? _communityFeedStream;
+  DateTime? _communityFeedDay;
+
+  Stream<QuerySnapshot> _getCommunityFeedStream() {
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
-    final todayEnd = todayStart.add(const Duration(days: 1));
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    if (_communityFeedStream == null || _communityFeedDay != todayStart) {
+      final todayEnd = todayStart.add(const Duration(days: 1));
+      _communityFeedDay = todayStart;
+      // Project index rule (dash-5): range filter + orderBy on the SAME
+      // field (timestamp) — isGreaterThan + orderBy descending. Single-field
+      // query: served by the automatic index, no composite index required.
+      _communityFeedStream = FirebaseFirestore.instance
           .collection('noise_readings')
-          .where(
-            'timestamp',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart),
-          )
+          .where('timestamp', isGreaterThan: Timestamp.fromDate(todayStart))
           .where('timestamp', isLessThan: Timestamp.fromDate(todayEnd))
-          .snapshots(),
+          .orderBy('timestamp', descending: true)
+          .snapshots();
+    }
+    return _communityFeedStream!;
+  }
+
+  // Build Community Feed Card with today's report count
+  Widget _buildCommunityFeedCard() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _getCommunityFeedStream(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          // dash-5: do not silently render 0 — log the real failure.
+          AppLogger.error(
+              '[Dashboard] Community feed count query failed', snapshot.error);
+        }
         // Count today's reports
         final reportCount = snapshot.hasData ? snapshot.data!.docs.length : 0;
 
