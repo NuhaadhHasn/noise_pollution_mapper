@@ -10,6 +10,7 @@ import 'classification_guide_screen.dart';
 import 'donation_screen.dart';
 import '../utils/theme_helper.dart';
 import '../utils/firestore_batch_utils.dart';
+import '../utils/app_logger.dart';
 
 class SettingsScreenEnhanced extends StatefulWidget {
   final bool isInAppShell;
@@ -825,8 +826,12 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     );
   }
 
-  // Delete account confirmation
+  // Delete account confirmation. Collects the password up front because
+  // deletion re-authenticates BEFORE touching any data
+  // (settings-1/sec-3/flow6-01).
   void _showDeleteAccountConfirmation() {
+    final passwordController = TextEditingController();
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -835,9 +840,28 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           'Delete Account?',
           style: TextStyle(color: Colors.red),
         ),
-        content: Text(
-          'This will delete your account, but your noise recordings will be preserved as anonymous community data to help reduce noise pollution. This action cannot be undone.',
-          style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'This will delete your account, but your noise recordings will be preserved as anonymous community data to help reduce noise pollution. This action cannot be undone.\n\nEnter your password to confirm.',
+              style: TextStyle(
+                color: ThemeHelper.getSecondaryTextColor(context),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              style: TextStyle(color: ThemeHelper.getTextColor(context)),
+              decoration: InputDecoration(
+                labelText: 'Password',
+                labelStyle: TextStyle(
+                  color: ThemeHelper.getSecondaryTextColor(context),
+                ),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -851,8 +875,17 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           ),
           TextButton(
             onPressed: () async {
+              final password = passwordController.text.trim();
+              if (password.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter your password to confirm'),
+                  ),
+                );
+                return;
+              }
               Navigator.pop(context);
-              await _deleteAccount();
+              await _deleteAccount(password);
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
@@ -861,11 +894,18 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     );
   }
 
-  // Delete account implementation
-  Future<void> _deleteAccount() async {
+  // Delete account implementation.
+  // Order is CRITICAL (settings-1/sec-3/flow6-01):
+  //   1. Re-authenticate — the only step that can fail with
+  //      requires-recent-login, so it must fail BEFORE any data is
+  //      touched (mirrors the change-password flow above).
+  //   2. Anonymize readings in chunked batches (arch-4/flow6-05).
+  //   3. Delete the Firebase Auth user.
+  Future<void> _deleteAccount(String password) async {
+    var loadingShown = false;
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
+      if (user == null || user.email == null) {
         throw Exception('No user logged in');
       }
 
@@ -880,8 +920,19 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           ),
         ),
       );
+      loadingShown = true;
 
-      // Step 1: Anonymize user's noise readings (DON'T DELETE - preserve community data!)
+      // Step 1: Re-authenticate FIRST. Destructive writes only run once
+      // Firebase has accepted a fresh credential, so a stale session can
+      // never orphan the user's data.
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: password,
+      );
+      await user.reauthenticateWithCredential(credential);
+
+      // Step 2: Anonymize user's noise readings (DON'T DELETE - preserve
+      // community data!) in chunked batches.
       final uid = user.uid;
       final firestore = FirebaseFirestore.instance;
 
@@ -890,23 +941,23 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           .where('userId', isEqualTo: uid)
           .get();
 
-      // Update all readings to anonymize user info (preserve the valuable data)
-      final batch = firestore.batch();
-      for (var doc in snapshot.docs) {
-        batch.update(doc.reference, {
+      await FirestoreBatchUtils.applyInChunks(
+        firestore,
+        snapshot.docs.map((doc) => doc.reference).toList(),
+        (batch, ref) => batch.update(ref, {
           'userEmail': 'Deleted User',
           'userId': 'deleted_user_${uid.substring(0, 8)}',
           // Keep partial ID for data integrity
-        });
-      }
-      await batch.commit();
+        }),
+      );
 
-      // Step 2: Delete the Firebase Auth user (but data stays!)
+      // Step 3: Delete the Firebase Auth user (but data stays!)
       await user.delete();
 
       // Close loading dialog
       if (!mounted) return;
       Navigator.pop(context); // Close loading
+      loadingShown = false;
 
       // Navigate to login screen and clear all previous routes
       if (!mounted) return;
@@ -923,14 +974,19 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
         ),
       );
     } on FirebaseAuthException catch (e) {
+      AppLogger.error('[Settings] Account deletion failed', e);
+
       // Close loading dialog if open
-      if (mounted) {
+      if (loadingShown && mounted) {
         Navigator.pop(context);
       }
 
       String errorMessage = 'Failed to delete account';
 
-      if (e.code == 'requires-recent-login') {
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        errorMessage =
+            'Password is incorrect. Your account and data were NOT changed.';
+      } else if (e.code == 'requires-recent-login') {
         errorMessage =
             'Please log out and log in again before deleting your account';
       } else {
@@ -943,8 +999,10 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
         );
       }
     } catch (e) {
+      AppLogger.error('[Settings] Account deletion failed', e);
+
       // Close loading dialog if open
-      if (mounted) {
+      if (loadingShown && mounted) {
         Navigator.pop(context);
       }
 
