@@ -155,11 +155,25 @@ class SyncService {
           continue;
         }
 
+        // Never upload another user's queued recording
+        // (offline-6/flow2-2/flow5-2). Foreign entries stay queued until
+        // their owner signs in; entries with no resolvable owner are
+        // skipped so they are never mis-attributed.
+        final ownerId = recording.userId;
+        if (ownerId == null || ownerId != user.uid) {
+          AppLogger.warning(
+            '[SyncService] Skipping ${recording.id}: queued by '
+            '${ownerId ?? "unknown user"}, current user is ${user.uid}. '
+            'Leaving in queue for its owner.',
+          );
+          continue;
+        }
+
         try {
           AppLogger.debug('[SyncService] Syncing recording: ${recording.id}');
 
-          // Save to Firebase
-          await _saveToFirebase(recording, user.uid);
+          // Save to Firebase under the recording owner's uid
+          await _saveToFirebase(recording, ownerId);
 
           // Mark as synced in local storage
           await _storage.markAsSynced(recording.id);
