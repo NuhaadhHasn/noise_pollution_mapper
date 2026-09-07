@@ -1,0 +1,10 @@
+# Copy to android/key.properties and fill in real values. NEVER commit key.properties.
+# Generate the keystore once (keep it backed up outside the repo — losing it means
+# losing the ability to update the app on the Play Store):
+#   keytool -genkey -v -keystore %USERPROFILE%\noise-mapper-release.jks ^
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias noise_mapper
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=noise_mapper
+# Absolute path, or path relative to android/app/
+storeFile=C:/Users/YOUR_USER/noise-mapper-release.jks
