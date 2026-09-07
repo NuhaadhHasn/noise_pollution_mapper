@@ -76,16 +76,12 @@ This app enables government agencies and citizens to:
    flutter pub get
    ```
 
-3. **Create `.env` file** (root directory)
-   ```env
-   FIREBASE_API_KEY=your_api_key
-   FIREBASE_APP_ID=your_app_id
-   FIREBASE_PROJECT_ID=your_project_id
-   FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-   CONFIDENCE_THRESHOLD=0.6
-   CLASSIFICATION_INTERVAL_SECONDS=5
-   HIGH_NOISE_THRESHOLD=70
-   ```
+3. **Configuration** — no `.env` file is used. Firebase client config is
+   generated in `lib/firebase_options.dart` (via `flutterfire configure`).
+   Donation display config is served from the Firestore document
+   `app_config/donations` (fields: `paypalBusinessEmail`, `paypalSandboxMode`,
+   `buyMeACoffeeUrl`). Secrets are never bundled with the app
+   (see `docs/SECURITY_ROTATION.md`).
 
 4. **Run the app**
    ```bash
