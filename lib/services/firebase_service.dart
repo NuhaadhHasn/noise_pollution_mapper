@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/app_logger.dart';
 import '../models/offline_recording.dart';
 import 'offline_storage_service.dart';
@@ -17,6 +18,24 @@ class FirebaseService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final Connectivity _connectivity = Connectivity();
   final OfflineStorageService _offlineStorage = OfflineStorageService();
+
+  /// Round a coordinate to 3 decimal places (~110 m grid).
+  /// Applied when the 'anonymize_location' preference is enabled (flow6-03).
+  static double roundCoordinate(double value) =>
+      (value * 1000).roundToDouble() / 1000;
+
+  /// Privacy-safe author label written to shared noise_readings docs (sec-2).
+  /// Prefers the Auth displayName; falls back to a masked email
+  /// (abc***@domain.com). Never returns a full raw email address.
+  static String authorLabel({String? displayName, String? email}) {
+    final name = displayName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    if (email == null || !email.contains('@')) return 'Anonymous';
+    final parts = email.split('@');
+    final local = parts[0];
+    final prefix = local.length > 3 ? local.substring(0, 3) : local;
+    return '$prefix***@${parts.sublist(1).join('@')}';
+  }
 
   // Save noise reading to Firestore (with optional sound classification data).
   // Automatically handles offline mode by queuing for later sync.
@@ -36,6 +55,22 @@ class FirebaseService {
       return SaveOutcome.failed;
     }
 
+    // Honor the 'Anonymize Location' privacy setting at WRITE time (flow6-03).
+    // Rounding happens here — before BOTH the online write and the offline
+    // queue entry — so raw coordinates never leave the device when enabled.
+    double lat = latitude;
+    double lng = longitude;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('anonymize_location') ?? false) {
+        lat = roundCoordinate(latitude);
+        lng = roundCoordinate(longitude);
+      }
+    } catch (e) {
+      AppLogger.warning(
+          '[FirebaseService] Could not read privacy prefs, using raw coordinates: $e');
+    }
+
     // Check connectivity with error handling
     bool isOnline = false;
     try {
@@ -53,8 +88,8 @@ class FirebaseService {
         // ONLINE: Save directly to Firebase
         await _saveToFirebase(
           decibelLevel: decibelLevel,
-          latitude: latitude,
-          longitude: longitude,
+          latitude: lat,
+          longitude: lng,
           locationName: locationName,
           soundClass: soundClass,
           soundType: soundType,
@@ -76,8 +111,8 @@ class FirebaseService {
     try {
       await _saveOffline(
         decibelLevel: decibelLevel,
-        latitude: latitude,
-        longitude: longitude,
+        latitude: lat,
+        longitude: lng,
         locationName: locationName,
         soundClass: soundClass,
         soundType: soundType,
@@ -124,7 +159,13 @@ class FirebaseService {
   }) async {
     final data = {
       'userId': userId,
-      'userEmail': _auth.currentUser?.email,
+      // Privacy (sec-2): never store the raw email in the shared collection.
+      // Field name kept as 'userEmail' for reader compatibility
+      // (community_feed_screen.dart displays and re-masks it harmlessly).
+      'userEmail': authorLabel(
+        displayName: _auth.currentUser?.displayName,
+        email: _auth.currentUser?.email,
+      ),
       'decibelLevel': decibelLevel,
       'latitude': latitude,
       'longitude': longitude,
@@ -165,7 +206,13 @@ class FirebaseService {
       syncAttempts: 0,
       isSynced: false,
       userId: userId,
-      userEmail: _auth.currentUser?.email,
+      // Privacy (sec-2, playbook §4.2): queue the masked label so the
+      // SyncService upload writes the same privacy-safe value as the
+      // online path.
+      userEmail: authorLabel(
+        displayName: _auth.currentUser?.displayName,
+        email: _auth.currentUser?.email,
+      ),
     );
 
     await _offlineStorage.saveOfflineRecording(recording);
