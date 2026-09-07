@@ -5,6 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'dart:typed_data';
 import '../theme/app_theme.dart';
@@ -85,6 +86,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // Track if we've already shown alert for current high noise session
   bool _hasShownHighNoiseAlert = false;
 
+  // flow6-04/settings-4: alert prefs written by SettingsScreenEnhanced
+  // (keys 'high_noise_alerts' and 'db_threshold', defaults true / 70.0 -
+  // must match settings_screen_enhanced.dart lines 49 and 57).
+  bool _highNoiseAlertsEnabled = true;
+  double _alertThresholdDb = 70.0;
+
   // Track if we've already surfaced a save failure for the current
   // recording session (avoid a snackbar every 5 s) — fb-1
   bool _hasShownSaveErrorSnackbar = false;
@@ -113,6 +120,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     SharedAppState.currentTabIndex.addListener(_onShellTabChanged);
     _initializeAudioRecorder();
     _requestPermissions();
+    _loadAlertPrefs();
     // Call location immediately (no delay - delay causes race condition)
     _getCurrentLocation();
     AppLogger.debug('User ID: ${FirebaseAuth.instance.currentUser?.uid}');
@@ -191,6 +199,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       // Don't auto-start recording - let user tap the button
     } else {
       _showPermissionDeniedDialog();
+    }
+  }
+
+  // flow6-04/settings-4: load alert prefs written by SettingsScreenEnhanced
+  Future<void> _loadAlertPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _highNoiseAlertsEnabled = prefs.getBool('high_noise_alerts') ?? true;
+      _alertThresholdDb = prefs.getDouble('db_threshold') ?? 70.0;
+      AppLogger.debug(
+        'Alert prefs loaded: enabled=$_highNoiseAlertsEnabled, '
+        'threshold=${_alertThresholdDb.toStringAsFixed(0)} dB',
+      );
+    } catch (e) {
+      AppLogger.error('Failed to load alert preferences', e);
     }
   }
 
@@ -421,6 +444,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     });
 
     try {
+      // flow6-04: pick up any threshold/toggle change made in Settings
+      await _loadAlertPrefs();
+
       // Defensively cancel anything a previous session may have leaked
       await _noiseSubscription?.cancel();
       _noiseSubscription = null;
@@ -502,15 +528,18 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 _avgDb = NoiseStats.energyMeanDb(_dbHistory);
               }
 
-              // Check for high noise and show notification
-              if (_currentDb > 70 && !_hasShownHighNoiseAlert) {
+              // flow6-04/settings-4: threshold + toggle come from user
+              // settings, not hardcoded values
+              if (_highNoiseAlertsEnabled &&
+                  _currentDb > _alertThresholdDb &&
+                  !_hasShownHighNoiseAlert) {
                 NotificationService.showHighNoiseAlert(_currentDb);
                 _hasShownHighNoiseAlert =
                     true; // Only alert once per recording session
               }
 
-              // Reset alert flag if noise drops below threshold
-              if (_currentDb < 65) {
+              // Reset alert flag once noise drops 5 dB below the threshold
+              if (_currentDb < _alertThresholdDb - 5) {
                 _hasShownHighNoiseAlert = false;
               }
             }
