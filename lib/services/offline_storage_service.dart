@@ -90,7 +90,7 @@ class OfflineStorageService {
           }
           return false;
         })
-        .map((v) => OfflineRecording.fromMap(v))
+        .map((v) => OfflineRecording.fromMap(v as Map))
         .toList();
 
     AppLogger.debug(
@@ -217,7 +217,7 @@ class OfflineStorageService {
     }
     return _recordingsBox!.values
         .whereType<Map>()
-        .map((v) => OfflineRecording.fromMap(v as Map<String, dynamic>))
+        .map((v) => OfflineRecording.fromMap(v))
         .toList();
   }
 
@@ -226,7 +226,7 @@ class OfflineStorageService {
     if (!_isInitialized) return null;
     final data = _recordingsBox!.get(id);
     if (data is Map) {
-      return OfflineRecording.fromMap(data as Map<String, dynamic>);
+      return OfflineRecording.fromMap(data);
     }
     return null;
   }

@@ -30,15 +30,24 @@ class OfflineRecording {
     this.isSynced = false,
   });
 
-  /// Create from a map (for deserialization)
-  factory OfflineRecording.fromMap(Map<String, dynamic> map) {
+  /// Create from a map (for deserialization).
+  /// Accepts `Map<dynamic, dynamic>` because Hive dynamic boxes return
+  /// untyped maps for entries loaded from disk after an app restart
+  /// (offline-1/flow2-1) — a `Map<String, dynamic>` parameter would throw
+  /// an implicit-cast TypeError before the body even runs.
+  factory OfflineRecording.fromMap(Map<dynamic, dynamic> raw) {
+    final map = Map<String, dynamic>.from(raw);
     return OfflineRecording(
       id: map['id'] as String,
       decibelLevel: (map['decibelLevel'] as num).toDouble(),
       latitude: (map['latitude'] as num).toDouble(),
       longitude: (map['longitude'] as num).toDouble(),
       locationName: map['locationName'] as String?,
-      timestamp: map['timestamp'] as DateTime,
+      // Hive persists DateTime natively; the String branch is defensive
+      // for any entry that was serialized through JSON.
+      timestamp: map['timestamp'] is DateTime
+          ? map['timestamp'] as DateTime
+          : DateTime.parse(map['timestamp'] as String),
       soundClass: map['soundClass'] as String?,
       soundType: map['soundType'] as String?,
       confidence: (map['confidence'] as num?)?.toDouble(),
