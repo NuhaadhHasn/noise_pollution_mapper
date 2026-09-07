@@ -82,16 +82,27 @@ class SyncService {
       // If we just came online and have pending recordings, trigger sync
       if (!wasOnline && _isOnline) {
         AppLogger.info('[SyncService] Back online! Checking for pending syncs...');
-        final pendingCount = _storage.getPendingCount();
-        if (pendingCount > 0) {
-          AppLogger.info('[SyncService] Found $pendingCount pending recordings. Starting sync...');
-          syncOfflineRecordings();
-        }
+        _handleBackOnline();
       }
     } catch (e) {
       AppLogger.error('[SyncService] Error handling connectivity change', e);
       // Assume offline on error
       _isOnline = false;
+    }
+  }
+
+  /// On connectivity restoration, give previously max-attempts-failed
+  /// recordings another chance (offline-2/flow2-7), then sync anything
+  /// pending. New connection == new circumstances, so the old failures
+  /// are no longer meaningful.
+  Future<void> _handleBackOnline() async {
+    await _storage.resetFailedSyncAttempts(maxSyncAttempts);
+    final pendingCount = _storage.getPendingCount();
+    if (pendingCount > 0) {
+      AppLogger.info(
+        '[SyncService] Found $pendingCount pending recordings. Starting sync...',
+      );
+      await syncOfflineRecordings();
     }
   }
 
@@ -265,12 +276,15 @@ class SyncService {
     await _firestore.collection('noise_readings').doc(recording.id).set(data);
   }
 
-  /// Manually trigger sync (user-initiated)
+  /// Manually trigger sync (user-initiated). Explicit user intent resets
+  /// the attempt counter on dead-lettered recordings so "Sync Now" always
+  /// retries everything (offline-2/flow2-7).
   Future<int> triggerManualSync() async {
     if (!_isOnline) {
       AppLogger.warning('[SyncService] Cannot manually sync while offline');
       return 0;
     }
+    await _storage.resetFailedSyncAttempts(maxSyncAttempts);
     return await syncOfflineRecordings();
   }
 
@@ -281,6 +295,7 @@ class SyncService {
         'isOnline': _isOnline,
         'isSyncing': _isSyncing,
         'pendingCount': getPendingCount(),
+        'failedCount': _storage.getFailedCount(maxSyncAttempts),
         'lastSyncTime': _storage.getLastSyncTimeSync(), // Use sync version
       };
     } catch (e) {
@@ -289,6 +304,7 @@ class SyncService {
         'isOnline': false,
         'isSyncing': false,
         'pendingCount': 0,
+        'failedCount': 0,
         'lastSyncTime': null,
       };
     }

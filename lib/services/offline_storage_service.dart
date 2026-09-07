@@ -281,6 +281,55 @@ class OfflineStorageService {
     }
   }
 
+  /// Count of unsynced recordings that have reached [maxAttempts] failed
+  /// sync attempts (offline-2/flow2-7 dead-letter surface).
+  int getFailedCount(int maxAttempts) {
+    if (!_isInitialized) return 0;
+
+    int count = 0;
+    for (final key in _recordingsBox!.keys.toList()) {
+      final value = _recordingsBox!.get(key);
+      if (value is Map &&
+          !(value['isSynced'] as bool? ?? false) &&
+          (value['syncAttempts'] as int? ?? 0) >= maxAttempts) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// Reset syncAttempts on every unsynced recording that reached
+  /// [maxAttempts], making them eligible for sync again. Returns the number
+  /// of recordings reset (offline-2/flow2-7).
+  Future<int> resetFailedSyncAttempts(int maxAttempts) async {
+    if (!_isInitialized) return 0;
+
+    int resetCount = 0;
+    try {
+      for (final key in _recordingsBox!.keys.toList()) {
+        final value = _recordingsBox!.get(key);
+        if (value is Map &&
+            !(value['isSynced'] as bool? ?? false) &&
+            (value['syncAttempts'] as int? ?? 0) >= maxAttempts) {
+          final map = Map<String, dynamic>.from(value);
+          map['syncAttempts'] = 0;
+          map['syncError'] = null;
+          await _recordingsBox!.put(key, map);
+          resetCount++;
+        }
+      }
+      if (resetCount > 0) {
+        AppLogger.info(
+          '[OfflineStorage] Reset sync attempts on $resetCount failed recordings',
+        );
+      }
+      return resetCount;
+    } catch (e) {
+      AppLogger.error('[OfflineStorage] Failed to reset sync attempts', e);
+      return resetCount;
+    }
+  }
+
   /// Delete a recording from the queue
   Future<bool> deleteRecording(String id) async {
     if (!_isInitialized) return false;

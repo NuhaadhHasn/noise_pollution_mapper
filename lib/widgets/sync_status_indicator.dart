@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/sync_service.dart';
 import '../utils/app_logger.dart';
+import '../utils/theme_helper.dart';
 
 /// Widget that displays sync status in app bar
 /// Shows different icons based on online/offline state and pending uploads
@@ -149,6 +150,7 @@ class _SyncStatusIndicatorState extends State<SyncStatusIndicator> {
     final isOnline = _syncStatus['isOnline'] as bool? ?? false;
     final isSyncing = _syncStatus['isSyncing'] as bool? ?? false;
     final pendingCount = _syncStatus['pendingCount'] as int? ?? 0;
+    final failedCount = _syncStatus['failedCount'] as int? ?? 0;
     final lastSyncTime = _syncStatus['lastSyncTime'] as DateTime?; // Already sync now
 
     showDialog(
@@ -183,6 +185,17 @@ class _SyncStatusIndicatorState extends State<SyncStatusIndicator> {
               pendingCount > 0 ? Icons.upload_file : Icons.check_circle,
               pendingCount > 0 ? Colors.orange : Colors.green,
             ),
+            if (failedCount > 0) ...[
+              const SizedBox(height: 12),
+              // Dead-lettered recordings (offline-2/flow2-7): visible and
+              // recoverable — "Sync Now" resets their attempts and retries.
+              _buildStatusRow(
+                'Failed Uploads:',
+                '$failedCount recording(s) — Sync Now will retry them',
+                Icons.error_outline,
+                ThemeHelper.getErrorColor(context),
+              ),
+            ],
             const SizedBox(height: 12),
             // Sync status
             _buildStatusRow(
