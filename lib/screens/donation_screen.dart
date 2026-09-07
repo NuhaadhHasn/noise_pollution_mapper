@@ -32,7 +32,7 @@ class _DonationScreenState extends State<DonationScreen> {
     super.dispose();
   }
 
-  void _processPayPalDonation(double amount) {
+  Future<void> _processPayPalDonation(double amount) async {
     // Validate amount
     final error = DonationService.getValidationError(amount);
     if (error != null) {
@@ -40,14 +40,19 @@ class _DonationScreenState extends State<DonationScreen> {
       return;
     }
 
-    // Check if PayPal credentials are configured
-    if (DonationService.clientId.isEmpty || 
+    await DonationService.ensureConfigLoaded();
+    if (!mounted) return;
+
+    // Check if PayPal donation is configured
+    if (DonationService.clientId.isEmpty ||
         DonationService.clientId.contains('your_paypal')) {
       DonationService.showErrorSnackBar(
         context,
-        'PayPal credentials not configured. Please contact the developer.',
+        'PayPal donations are not configured. Please contact the developer.',
       );
-      AppLogger.error('PayPal credentials not configured in .env file');
+      AppLogger.error(
+        'PayPal donation config missing in app_config/donations',
+      );
       return;
     }
 
@@ -63,14 +68,19 @@ class _DonationScreenState extends State<DonationScreen> {
     );
   }
 
-  void _openBuyMeACoffee() {
-    if (DonationService.buyMeACoffeeUrl.isEmpty || 
+  Future<void> _openBuyMeACoffee() async {
+    await DonationService.ensureConfigLoaded();
+    if (!mounted) return;
+
+    if (DonationService.buyMeACoffeeUrl.isEmpty ||
         DonationService.buyMeACoffeeUrl.contains('yourusername')) {
       DonationService.showErrorSnackBar(
         context,
         'Buy Me a Coffee URL not configured. Please contact the developer.',
       );
-      AppLogger.error('Buy Me a Coffee URL not configured in .env file');
+      AppLogger.error(
+        'Buy Me a Coffee URL missing in app_config/donations',
+      );
       return;
     }
 

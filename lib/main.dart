@@ -4,7 +4,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
@@ -25,15 +24,6 @@ final ValueNotifier<Color> themeColorNotifier = ValueNotifier<Color>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Load environment variables
-  try {
-    await dotenv.load(fileName: ".env");
-    AppLogger.info('Environment variables loaded successfully');
-  } catch (e) {
-    AppLogger.warning('Failed to load .env file (using defaults): $e');
-    // App will continue with hardcoded defaults if .env doesn't exist
-  }
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
