@@ -1032,48 +1032,59 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               // Recording button - round and beautiful
               Column(
                 children: [
-                  // Round record button
-                  GestureDetector(
-                    onTap: _isRecording ? _stopRecording : _startRecording,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      width: 70,
-                      height: 70,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: _isRecording
-                              ? [Colors.red, Colors.red.shade700]
-                              : [ThemeHelper.getPrimaryColor(context), ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.7)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color:
-                                (_isRecording
-                                        ? Colors.red
-                                        : ThemeHelper.getPrimaryColor(context))
-                                    .withValues(alpha: 0.5),
-                            blurRadius: 20,
-                            spreadRadius: 3,
+                  // Round record button (a11y-2: expose button role + label)
+                  Semantics(
+                    button: true,
+                    enabled: true,
+                    label: _isRecording
+                        ? 'Stop noise measurement'
+                        : 'Start noise measurement',
+                    child: GestureDetector(
+                      onTap: _isRecording ? _stopRecording : _startRecording,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        width: 70,
+                        height: 70,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: _isRecording
+                                ? [Colors.red, Colors.red.shade700]
+                                : [ThemeHelper.getPrimaryColor(context), ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.7)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
-                        ],
-                      ),
-                      child: Icon(
-                        _isRecording ? Icons.stop : Icons.mic,
-                        color: Colors.white,
-                        size: 32,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color:
+                                  (_isRecording
+                                          ? Colors.red
+                                          : ThemeHelper.getPrimaryColor(context))
+                                      .withValues(alpha: 0.5),
+                              blurRadius: 20,
+                              spreadRadius: 3,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          _isRecording ? Icons.stop : Icons.mic,
+                          color: Colors.white,
+                          size: 32,
+                        ),
                       ),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  // Status text below button
-                  Text(
-                    _isRecording ? 'Recording...' : 'Tap to measure',
-                    style: TextStyle(
-                      color: _isRecording ? Colors.red : AppTheme.textGray,
-                      fontSize: 14,
+                  // Status text below button (a11y-2: live region announces
+                  // recording state changes to assistive tech)
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _isRecording ? 'Recording...' : 'Tap to measure',
+                      style: TextStyle(
+                        color: _isRecording ? Colors.red : AppTheme.textGray,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
                 ],
