@@ -232,11 +232,18 @@ class SyncService {
   Future<void> _saveToFirebase(OfflineRecording recording, String userId) async {
     final data = <String, dynamic>{
       'userId': userId,
+      'userEmail': recording.userEmail ?? _auth.currentUser?.email,
       'decibelLevel': recording.decibelLevel,
       'latitude': recording.latitude,
       'longitude': recording.longitude,
       'locationName': recording.locationName ?? 'Unknown Location',
-      'timestamp': FieldValue.serverTimestamp(),
+      // fb-2/flow2-3: the true capture time, NOT the sync time. This is a
+      // deliberate, documented deviation from the serverTimestamp
+      // convention: serverTimestamp() here would stamp the moment of sync,
+      // putting offline readings on the wrong day in analytics/history/
+      // heatmap. createdAt keeps the client DateTime per the dual-write
+      // convention, so readers that handle both fields stay correct.
+      'timestamp': Timestamp.fromDate(recording.timestamp),
       'createdAt': recording.timestamp,
       'deviceInfo': 'Mobile Device',
     };
