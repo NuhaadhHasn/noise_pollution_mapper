@@ -12,6 +12,7 @@ import '../utils/animations.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
 import '../utils/shared_app_state.dart';
+import '../utils/noise_stats.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
 import '../widgets/sync_status_indicator.dart';
@@ -496,9 +497,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 _minDb = _currentDb;
               }
 
-              // Calculate average from history
+              // dash-1: energy-based average (Leq), not arithmetic dB mean
               if (_dbHistory.isNotEmpty) {
-                _avgDb = _dbHistory.reduce((a, b) => a + b) / _dbHistory.length;
+                _avgDb = NoiseStats.energyMeanDb(_dbHistory);
               }
 
               // Check for high noise and show notification
