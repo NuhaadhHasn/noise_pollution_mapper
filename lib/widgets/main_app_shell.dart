@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../screens/map_view_screen.dart';
@@ -5,6 +6,7 @@ import '../screens/analytics_screen.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/history_screen.dart';
 import '../screens/settings_screen_enhanced.dart';
+import '../services/profile_sync_service.dart';
 import 'shared_bottom_navbar.dart';
 
 class MainAppShell extends StatefulWidget {
@@ -23,6 +25,10 @@ class _MainAppShellState extends State<MainAppShell> {
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
+    // settings-9/flow6-06: if the user completed an email-change
+    // verification since last launch, copy the now-verified Auth email
+    // onto their Firestore documents. Fire-and-forget; never blocks UI.
+    unawaited(ProfileSyncService().reconcileUserEmail());
   }
 
   @override
