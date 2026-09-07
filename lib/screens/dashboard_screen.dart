@@ -63,6 +63,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   double _latitude = 6.9271; // Colombo default
   double _longitude = 79.8612;
   bool _isLocationLoading = true;
+  // dash-4/flow2-4: true only after a real GPS fix. Reading saves are gated
+  // on this flag so the hardcoded Colombo default above is never persisted.
+  bool _hasRealLocation = false;
 
   // Timer for periodic Firebase saves (don't save every reading, save every 5 seconds)
   Timer? _saveTimer;
@@ -241,11 +244,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         },
       );
 
+      _hasRealLocation = true;
       if (mounted) {
         setState(() {
           _latitude = position.latitude;
           _longitude = position.longitude;
         });
+      } else {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
       }
 
       AppLogger.info('Got GPS coordinates: $_latitude, $_longitude');
@@ -361,6 +368,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       AppLogger.debug('User declined to enable location services');
     }
   }
+
+  // dash-4/flow2-4: _locationName holds UI status strings on failure paths
+  // (set at _getCurrentLocation). These must never be persisted as a
+  // reading's locationName.
+  bool get _locationNameIsStatus =>
+      _locationName == 'Fetching location...' ||
+      _locationName == 'Location permission denied' ||
+      _locationName == 'Location services disabled';
 
   // Start noise measurement
   void _startRecording() async {
@@ -515,13 +530,22 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         // CRITICAL: Stop if not recording (prevents timer leak)
         if (!_isRecording || !mounted) return;
 
+        // dash-4/flow2-4: never persist the hardcoded Colombo default -
+        // only save once a real GPS fix has been obtained this app session.
+        if (!_hasRealLocation) {
+          AppLogger.warning(
+            'Skipping reading save: no real GPS fix yet (refusing to save default coordinates)',
+          );
+          return;
+        }
+
         if (_currentDb > 0 && _currentDb.isFinite) {
           _firebaseService
               .saveNoiseReading(
                 decibelLevel: _currentDb,
                 latitude: _latitude,
                 longitude: _longitude,
-                locationName: _locationName,
+                locationName: _locationNameIsStatus ? null : _locationName,
                 // Include classification data if available
                 soundClass: _currentClassification?.category,
                 soundType: _currentClassification?.soundType,
