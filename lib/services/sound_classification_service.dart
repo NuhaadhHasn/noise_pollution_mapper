@@ -53,6 +53,17 @@ class SoundClassificationService {
     try {
       AppLogger.debug('Initializing Sound Classification Service...');
 
+      // Load the official index->name class map first (finding ml-1).
+      // Without it every label would be wrong, so failure aborts init;
+      // the app then runs with dB measurement but no classification.
+      final classMapLoaded = await YAMNetClassMapping.loadOfficialClassMap();
+      if (!classMapLoaded) {
+        AppLogger.error('Official YAMNet class map failed to load - '
+            'sound classification disabled');
+        _isInitialized = false;
+        return false;
+      }
+
       _interpreter = await Interpreter.fromAsset('assets/models/yamnet.tflite');
       AppLogger.debug('Model input shape: ${_interpreter!.getInputTensor(0).shape}');
       AppLogger.debug('Model output shape: ${_interpreter!.getOutputTensor(0).shape}');
