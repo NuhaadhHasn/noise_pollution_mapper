@@ -20,6 +20,7 @@ import 'splash_screen.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/sound_classification_service.dart';
+import '../services/sync_service.dart';
 import 'community_feed_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -684,6 +685,27 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             onPressed: () async {
               // Capture navigator before async operation
               final navigator = Navigator.of(context);
+
+              // flow6-02: best-effort flush of the offline queue while
+              // this user is still authenticated. Bounded so logout can
+              // never hang; anything not uploaded stays queued in Hive
+              // tagged with this user's uid (cluster 02) and syncs on
+              // their next sign-in.
+              final syncService = SyncService();
+              if (syncService.isOnline() &&
+                  syncService.getPendingCount() > 0) {
+                try {
+                  await syncService
+                      .triggerManualSync()
+                      .timeout(const Duration(seconds: 15));
+                } on TimeoutException {
+                  AppLogger.warning(
+                    '[Dashboard] Pre-logout sync timed out; remaining recordings stay queued for this user',
+                  );
+                } catch (e) {
+                  AppLogger.error('[Dashboard] Pre-logout sync failed', e);
+                }
+              }
 
               // Sign out from Firebase
               await FirebaseAuth.instance.signOut();

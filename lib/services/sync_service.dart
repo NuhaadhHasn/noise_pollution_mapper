@@ -124,8 +124,22 @@ class SyncService {
 
   /// Sync pending recordings when a user signs in (offline-3). The stream
   /// also fires once on listen with the restored session, covering startup.
+  ///
+  /// On sign-out (flow6-02) nothing is uploaded and nothing is destroyed:
+  /// pending entries stay in Hive tagged with their owner's userId
+  /// (cluster 02), and the mid-sync guard in syncOfflineRecordings stops
+  /// any in-flight sync from writing without an authenticated session.
   void _onAuthStateChanged(User? user) {
-    if (user == null) return;
+    if (user == null) {
+      final pending = _storage.getPendingCount();
+      if (pending > 0) {
+        AppLogger.info(
+          '[SyncService] User signed out with $pending pending recordings. '
+          'They remain queued for their owner and sync on next sign-in.',
+        );
+      }
+      return;
+    }
     if (_isOnline && _storage.getPendingCount() > 0) {
       AppLogger.info(
         '[SyncService] User ${user.uid} signed in with pending recordings. Starting sync...',
@@ -196,6 +210,16 @@ class SyncService {
       }
 
       for (final recording in queuedRecordings) {
+        // flow6-02: abort mid-sync if the session ended (logout) or the
+        // user changed since this sync started — never write with a
+        // stale identity. Remaining recordings stay queued.
+        if (_auth.currentUser?.uid != user.uid) {
+          AppLogger.warning(
+            '[SyncService] Auth state changed mid-sync. Aborting; remaining recordings stay queued.',
+          );
+          break;
+        }
+
         // Check if max attempts exceeded
         if (recording.syncAttempts >= maxSyncAttempts) {
           AppLogger.warning(
