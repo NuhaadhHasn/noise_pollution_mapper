@@ -56,6 +56,29 @@ void main() {
       expect(YAMNetClassMapping.typePollution, equals('Pollution'));
     });
 
+    test('soundTypeForStoredClass buckets stored soundClass values exactly', () {
+      // Manual-report pseudo-categories (report_noise_screen.dart)
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Speech-Pollution'),
+          equals('Pollution'));
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Speech-Ambient'),
+          equals('Ambient'));
+      // Regression flow3-8: 'Other' must appear under the Ambient filter
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Other'),
+          equals('Ambient'));
+      // Ordinary categories defer to getSoundType
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Traffic'),
+          equals('Pollution'));
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Transport'),
+          equals('Pollution'));
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Alarm'),
+          equals('Pollution'));
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Uncertain'),
+          equals('Ambient'));
+      // Unknown legacy values degrade to Ambient (getSoundType default)
+      expect(YAMNetClassMapping.soundTypeForStoredClass('SomeLegacyValue'),
+          equals('Ambient'));
+    });
+
     test('Classification constants have correct types', () {
       expect(YAMNetClassMapping.categoryOther, isA<String>());
       expect(YAMNetClassMapping.typeAmbient, isA<String>());

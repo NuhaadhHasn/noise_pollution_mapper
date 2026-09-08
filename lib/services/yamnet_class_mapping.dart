@@ -658,6 +658,18 @@ class YAMNetClassMapping {
     }
   }
 
+  /// Single source of truth for bucketing a `soundClass` value AS STORED in
+  /// Firestore into Pollution/Ambient. Handles the two manual-report values
+  /// from report_noise_screen.dart ('Speech-Pollution'/'Speech-Ambient')
+  /// that are not YAMNet categories, then defers to [getSoundType].
+  /// Use this everywhere instead of hand-maintained category lists
+  /// (findings flow3-8 / analytics-4).
+  static String soundTypeForStoredClass(String storedClass) {
+    if (storedClass == 'Speech-Pollution') return typePollution;
+    if (storedClass == 'Speech-Ambient') return typeAmbient;
+    return getSoundType(storedClass);
+  }
+
   /// Get category from YAMNet class name or index
   static String getCategoryFromClassName(String className) {
     String? actualClassName;

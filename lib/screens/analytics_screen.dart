@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
+import '../services/yamnet_class_mapping.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
 
@@ -718,37 +719,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     if (_selectedFilter == 'All') {
       filteredCounts = Map.from(_soundTypeCounts);
     } else {
-      final pollutionCategories = [
-        'Traffic',
-        'Construction',
-        'Industrial',
-        'Tuk-tuk',
-        'Transport',
-        'Alarm',
-      ];
-      final ambientCategories = [
-        'Music',
-        'Nature',
-        'Speech',
-        'Religious',
-        'Market',
-        'Domestic',
-        'Body Sounds',
-        'Sports',
-        'Weather',
-        'Office',
-      ];
-
+      // flow3-8/analytics-4: exact-match every stored soundClass against the
+      // shared taxonomy — no hand-maintained lists, no substring matching.
+      // 'Speech-Pollution' now files under Pollution and 'Other' under
+      // Ambient, matching the pie chart's soundType buckets.
       for (var entry in _soundTypeCounts.entries) {
-        final category = entry.key;
-        final count = entry.value;
-
-        if (_selectedFilter == 'Pollution' &&
-            pollutionCategories.any((c) => category.contains(c))) {
-          filteredCounts[category] = count;
-        } else if (_selectedFilter == 'Ambient' &&
-            ambientCategories.any((c) => category.contains(c))) {
-          filteredCounts[category] = count;
+        final type = YAMNetClassMapping.soundTypeForStoredClass(entry.key);
+        if (type == _selectedFilter) {
+          filteredCounts[entry.key] = entry.value;
         }
       }
     }
