@@ -123,8 +123,9 @@ class SoundClassificationService {
       final maxIndex = _getMaxIndex(scores);
       final confidence = scores[maxIndex];
 
-      // Get actual YAMNet class name from mapping (CRITICAL FIX)
-      final yamnetClassName = YAMNetClassMapping.indexToClassName[maxIndex] ?? 'Unknown_Class_$maxIndex';
+      // Get the official YAMNet class name; the placeholder prefix must be
+      // 'YAMNet_Class_' so getCategoryFromClassName can parse the index (ml-2)
+      final yamnetClassName = YAMNetClassMapping.indexToClassName[maxIndex] ?? 'YAMNet_Class_$maxIndex';
       
       // DEBUG: Log top 3 predictions for debugging
       final sortedIndices = List<int>.generate(scores.length, (i) => i);

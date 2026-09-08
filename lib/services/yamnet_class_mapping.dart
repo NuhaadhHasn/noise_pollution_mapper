@@ -656,11 +656,12 @@ class YAMNetClassMapping {
   /// Get category from YAMNet class name or index
   static String getCategoryFromClassName(String className) {
     String? actualClassName;
+    int? classIndex;
 
     // Check if className is in format "YAMNet_Class_123"
     if (className.startsWith('YAMNet_Class_')) {
       final indexStr = className.replaceFirst('YAMNet_Class_', '');
-      final classIndex = int.tryParse(indexStr);
+      classIndex = int.tryParse(indexStr);
 
       if (classIndex != null && indexToClassName.containsKey(classIndex)) {
         // Convert index to AudioSet class name
@@ -689,27 +690,40 @@ class YAMNetClassMapping {
     }
 
     // Try intelligent categorization by keywords
-    return _categorizeByKeywords(actualClassName, null);
+    return _categorizeByKeywords(actualClassName, classIndex);
   }
 
   /// Intelligent categorization for unmapped classes based on keywords
   static String _categorizeByKeywords(String className, int? classIndex) {
     final lower = className.toLowerCase();
 
-    // Range-based fallback for gap indices where the class name is still
-    // "YAMNet_Class_N" (no indexToClassName entry). Uses AudioSet ontology
-    // structure to assign a reasonable category without guessing exact names.
+    // Range-based fallback for "YAMNet_Class_N" placeholders (only produced
+    // when the official class map failed to load). Coarse buckets follow the
+    // OFFICIAL yamnet_class_map.csv ordering, verified against the CSV:
+    // 0 Speech..35 Whistling, 36 Breathing..60 Heart murmur,
+    // 61 Cheering..66 Children playing, 67 Animal..131 Whale vocalization,
+    // 132 Music..276 Scary music, 277 Wind..281 Thunder, 282 Water..293
+    // Crackle, 294 Vehicle..321 Traffic noise, 322 Rail transport..336
+    // Skateboard, 337 Engine..347 Accelerating, 348 Door..388 Busy signal,
+    // 389 Alarm clock..395 Foghorn, 406 Fan/407 A/C, 408 Cash register..412
+    // Tools, 413 Hammer..430 Boom. Everything else: Other.
     if (classIndex != null && className.startsWith('YAMNet_Class_')) {
-      if (classIndex >= 137 && classIndex <= 228) return categoryMusic;
-      if (classIndex >= 0 && classIndex <= 15) return categorySpeech;
-      if (classIndex >= 16 && classIndex <= 35) return categoryBodySounds;
-      if (classIndex >= 36 && classIndex <= 136) return categoryNature;   // 36-108 animals, 109-136 more animals
-      if (classIndex >= 229 && classIndex <= 309) return categoryDomestic;
-      if (classIndex >= 310 && classIndex <= 373) return categoryTraffic;  // 323-347 have named entries; raw gaps default to Traffic
-      if (classIndex >= 374 && classIndex <= 387) return categorySports;
-      if (classIndex >= 388 && classIndex <= 393) return categoryConstruction;
-      if (classIndex >= 394 && classIndex <= 399) return categoryIndustrial;
-      // Indices 137-228 (Music), 400-520: fall through to keyword checks below
+      if (classIndex >= 0 && classIndex <= 34) return categorySpeech;
+      if (classIndex >= 35 && classIndex <= 60) return categoryBodySounds;
+      if (classIndex >= 61 && classIndex <= 66) return categorySpeech;
+      if (classIndex >= 67 && classIndex <= 131) return categoryNature;
+      if (classIndex >= 132 && classIndex <= 276) return categoryMusic;
+      if (classIndex >= 277 && classIndex <= 281) return categoryWeather;
+      if (classIndex >= 282 && classIndex <= 293) return categoryNature;
+      if (classIndex >= 294 && classIndex <= 321) return categoryTraffic;
+      if (classIndex >= 322 && classIndex <= 336) return categoryTransport;
+      if (classIndex >= 337 && classIndex <= 347) return categoryTraffic;
+      if (classIndex >= 348 && classIndex <= 388) return categoryDomestic;
+      if (classIndex >= 389 && classIndex <= 395) return categoryAlarm;
+      if (classIndex >= 406 && classIndex <= 407) return categoryIndustrial;
+      if (classIndex >= 408 && classIndex <= 412) return categoryOffice;
+      if (classIndex >= 413 && classIndex <= 430) return categoryConstruction;
+      return categoryOther;
     }
 
     // Transport keywords (train, aircraft — checked before general Traffic)
