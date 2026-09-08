@@ -46,6 +46,10 @@ class YAMNetClassMapping {
   static const String categoryWeather = "Weather";
   static const String categoryOffice = "Office";
 
+  /// Live-display-only pseudo-category for below-threshold classifications.
+  /// NEVER persisted to Firestore (see the dashboard save-timer gating).
+  static const String categoryUncertain = "Uncertain";
+
   /// Pollution type classification
   static const String typePollution = "Pollution";
   static const String typeAmbient = "Ambient";
@@ -646,6 +650,7 @@ class YAMNetClassMapping {
       case categorySports:
       case categoryWeather:
       case categoryOffice:
+      case categoryUncertain:
         return typeAmbient;
 
       default:
@@ -1151,6 +1156,8 @@ class YAMNetClassMapping {
         return '🌦️';
       case categoryOffice:
         return '💼';
+      case categoryUncertain:
+        return '❓';
       case categoryOther:
       default:
         return '🔊';
@@ -1192,6 +1199,8 @@ class YAMNetClassMapping {
         return 0xFF039BE5; // Light Blue (weather)
       case categoryOffice:
         return 0xFF5E35B1; // Deep Purple (office)
+      case categoryUncertain:
+        return 0xFF757575; // Dark Grey (uncertain)
       case categoryOther:
       default:
         return 0xFF9E9E9E; // Grey

@@ -625,16 +625,23 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         }
 
         if (_currentDb > 0 && _currentDb.isFinite) {
+          // ml-4/flow2-6: only persist classification data that meets the
+          // 0.30 confidence threshold. Below-threshold ('Uncertain') results
+          // are shown live but never written to Firestore as fact.
+          final classification =
+              (_currentClassification?.meetsThreshold ?? false)
+                  ? _currentClassification
+                  : null;
           _firebaseService
               .saveNoiseReading(
                 decibelLevel: _currentDb,
                 latitude: _latitude,
                 longitude: _longitude,
                 locationName: _locationNameIsStatus ? null : _locationName,
-                // Include classification data if available
-                soundClass: _currentClassification?.category,
-                soundType: _currentClassification?.soundType,
-                confidence: _currentClassification?.confidence,
+                // Include classification data only when confident
+                soundClass: classification?.category,
+                soundType: classification?.soundType,
+                confidence: classification?.confidence,
               )
               .then((outcome) {
             if (outcome == SaveOutcome.failed &&

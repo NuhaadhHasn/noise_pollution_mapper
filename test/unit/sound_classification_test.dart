@@ -64,11 +64,17 @@ void main() {
       expect(SoundClassificationService.confidenceThreshold, isA<double>());
     });
 
-    test('Confidence threshold is reasonable', () {
+    test('Confidence threshold matches project spec (0.30)', () {
       expect(SoundClassificationService.confidenceThreshold, greaterThanOrEqualTo(0.0));
       expect(SoundClassificationService.confidenceThreshold, lessThanOrEqualTo(1.0));
-      // Should be 60% for testing
-      expect(SoundClassificationService.confidenceThreshold, equals(0.6));
+      // Project constraint: classification confidence target is 0.30
+      expect(SoundClassificationService.confidenceThreshold, equals(0.30));
+    });
+
+    test('Uncertain pseudo-category is Ambient for display purposes', () {
+      expect(YAMNetClassMapping.categoryUncertain, equals('Uncertain'));
+      expect(YAMNetClassMapping.getSoundType('Uncertain'), equals('Ambient'));
+      expect(YAMNetClassMapping.getCategoryIcon('Uncertain'), equals('❓'));
     });
 
     test('Classification interval is positive', () {
