@@ -11,6 +11,7 @@ import '../utils/animations.dart';
 import '../utils/csv_builder.dart';
 import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
+import '../utils/app_logger.dart';
 import 'report_noise_screen.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -79,14 +80,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
   // Load initial recordings
   Future<void> _loadInitialRecordings() async {
     if (_isLoading) return;
-    
+
     setState(() {
       _isLoading = true;
     });
 
     try {
       final userId = FirebaseAuth.instance.currentUser?.uid;
-      if (userId == null) return;
+      if (userId == null) return; // fb-3: finally still resets _isLoading
 
       // Get total count
       _totalCount = await _firebaseService.getUserReadingsCount(userId);
@@ -102,15 +103,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
           _recordings = snapshot.docs;
           _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
           _hasMore = snapshot.docs.length == _pageSize;
-          _isLoading = false;
           _isOffline = false;
         });
       }
     } catch (e) {
+      AppLogger.error('Failed to load history', e);
       if (mounted) {
         setState(() {
-          _isLoading = false;
           _isOffline = true;
+        });
+      }
+    } finally {
+      // fb-3: ALWAYS reset — every path, including the userId-null early
+      // return. Otherwise _isLoading is stuck true and every retry no-ops.
+      if (mounted && _isLoading) {
+        setState(() {
+          _isLoading = false;
         });
       }
     }
@@ -126,14 +134,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     try {
       final userId = FirebaseAuth.instance.currentUser?.uid;
-      if (userId == null) return;
+      if (userId == null) return; // fb-3: finally still resets _isLoading
 
-      if (_lastDocument == null) {
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
+      if (_lastDocument == null) return; // finally resets _isLoading
 
       final snapshot = await _firebaseService.getUserReadingsPaginated(
         userId: userId,
@@ -146,15 +149,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
           _recordings.addAll(snapshot.docs);
           _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
           _hasMore = snapshot.docs.length == _pageSize;
-          _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
+      // Don't show a user-facing error for load-more; log and stop loading.
+      AppLogger.error('Failed to load more history', e);
+    } finally {
+      if (mounted && _isLoading) {
         setState(() {
           _isLoading = false;
         });
-        // Don't show error for load more, just stop loading
       }
     }
   }
