@@ -296,6 +296,18 @@ class FirebaseService {
     return snapshot.count ?? 0;
   }
 
+  // Delete a single noise reading by document id.
+  Future<void> deleteNoiseReading(String docId) {
+    return _firestore.collection('noise_readings').doc(docId).delete();
+  }
+
+  // Restore a previously deleted reading (undo support). Re-writes the
+  // original document data verbatim under the same id, preserving the
+  // original timestamp/createdAt pair (project convention: dual timestamps).
+  Future<void> restoreNoiseReading(String docId, Map<String, dynamic> data) {
+    return _firestore.collection('noise_readings').doc(docId).set(data);
+  }
+
   // Get readings by location (for specific city)
   Future<List<Map<String, dynamic>>> getReadingsByLocation(
     double lat,

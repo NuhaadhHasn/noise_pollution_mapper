@@ -731,7 +731,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   void _showDeleteConfirmation(BuildContext context, String docId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: ThemeHelper.getCardColor(context),
         title: Text('Delete Recording', style: TextStyle(color: ThemeHelper.getTextColor(context))),
         content: Text(
@@ -740,27 +740,86 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: Text('Cancel', style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context))),
           ),
           TextButton(
-            onPressed: () async {
-              await FirebaseFirestore.instance.collection('noise_readings').doc(docId).delete();
-              if (context.mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Recording deleted'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
+            onPressed: () {
+              Navigator.pop(dialogContext); // close dialog first
+              _deleteRecording(docId); // then delete + update the list
             },
-            child: Text('Delete', style: TextStyle(color: Colors.red)),
+            child: Text('Delete', style: TextStyle(color: AppTheme.highNoise)),
           ),
         ],
       ),
     );
+  }
+
+  // social-3/uiux-2/flow3-3: delete with immediate local-list update,
+  // undo support, and an error path.
+  Future<void> _deleteRecording(String docId) async {
+    final index = _recordings.indexWhere((d) => d.id == docId);
+    if (index == -1) return;
+    final removedData = _recordings[index].data() as Map<String, dynamic>;
+
+    try {
+      await _firebaseService.deleteNoiseReading(docId);
+    } catch (e) {
+      AppLogger.error('Failed to delete recording $docId', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to delete recording. Please try again.'),
+            backgroundColor: AppTheme.highNoise,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _recordings.removeAt(index);
+      if (_totalCount > 0) _totalCount--;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Recording deleted'),
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => _undoDelete(docId, removedData, index),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _undoDelete(
+      String docId, Map<String, dynamic> data, int index) async {
+    try {
+      await _firebaseService.restoreNoiseReading(docId, data);
+      // Re-fetch so the local list holds a real DocumentSnapshot again.
+      final restored = await FirebaseFirestore.instance
+          .collection('noise_readings')
+          .doc(docId)
+          .get();
+      if (!mounted || !restored.exists) return;
+      setState(() {
+        _recordings.insert(index.clamp(0, _recordings.length), restored);
+        _totalCount++;
+      });
+    } catch (e) {
+      AppLogger.error('Failed to restore recording $docId', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not restore recording.'),
+            backgroundColor: AppTheme.highNoise,
+          ),
+        );
+      }
+    }
   }
 
 }
