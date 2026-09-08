@@ -161,7 +161,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         _avgDb = stats['avg'] ?? 0;
         _minDb = stats['min'] ?? 0;
         _maxDb = stats['max'] ?? 0;
-        _totalHours = (stats['count'] ?? 0) / 12;
+        // fb-6/flow3-7: one reading is saved every 5 s while recording
+        // (dashboard _saveTimer), so hours = count * 5 s / 3600.
+        _totalHours = (stats['count'] ?? 0) * 5 / 3600;
         _totalCount = (stats['totalDocs'] ?? stats['count'] ?? 0).toInt();
         _soundTypeCounts = soundTypeCounts;
         _pollutionCount = pollutionCount;
@@ -371,7 +373,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       _buildStatCard(
                           'Highest', _maxDb, 'dB', AppTheme.highNoise),
                       _buildStatCard(
-                          'Duration', _totalHours, 'h', AppTheme.accentPurple),
+                          'Duration', _totalHours, 'h', AppTheme.accentPurple,
+                          decimals: 1),
                     ],
                   ),
                 ],
@@ -1103,7 +1106,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // ─── Stat Card ───────────────────────────────────────────────────────────────
 
   Widget _buildStatCard(
-      String label, double value, String unit, Color color) {
+      String label, double value, String unit, Color color,
+      {int decimals = 0}) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -1114,7 +1118,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            '${value.toStringAsFixed(0)} $unit',
+            '${value.toStringAsFixed(decimals)} $unit',
             style: TextStyle(
               color: color,
               fontSize: 32,
