@@ -31,8 +31,17 @@ class HeatmapPoint {
     // Range: 0-120 dB (typical urban noise: 30-100 dB)
     final intensity = _calculateIntensity(decibelLevel);
     
-    // Weight based on recency (newer readings have higher weight)
-    final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+    // Weight based on recency (newer readings have higher weight).
+    // Convention: writers store both 'timestamp' (FieldValue.serverTimestamp())
+    // and 'createdAt' (client DateTime, stored as Timestamp) — readers handle
+    // both, since 'timestamp' is null while a serverTimestamp is pending.
+    final rawTimestamp = data['timestamp'];
+    final rawCreatedAt = data['createdAt'];
+    final timestamp = rawTimestamp is Timestamp
+        ? rawTimestamp.toDate()
+        : rawCreatedAt is Timestamp
+            ? rawCreatedAt.toDate()
+            : DateTime.now();
     final weight = _calculateWeight(timestamp);
 
     return HeatmapPoint(
@@ -42,7 +51,11 @@ class HeatmapPoint {
       weight: weight,
       decibelLevel: decibelLevel,
       timestamp: timestamp,
-      soundCategory: data['soundCategory'] as String?,
+      // Audit flow3-1: writers persist classification under 'soundClass'
+      // (firebase_service.dart, sync_service.dart). 'soundCategory' is kept
+      // only as a legacy-document fallback.
+      soundCategory:
+          (data['soundClass'] ?? data['soundCategory']) as String?,
     );
   }
 
