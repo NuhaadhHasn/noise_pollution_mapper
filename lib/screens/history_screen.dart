@@ -425,29 +425,42 @@ class _HistoryScreenState extends State<HistoryScreen> {
               child: _isOffline
                   ? _buildOfflineUI()
                   : _recordings.isEmpty && !_isLoading
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                  ? LayoutBuilder(
+                      // flow3-5: the empty state must be scrollable, otherwise
+                      // RefreshIndicator can never fire pull-to-refresh.
+                      builder: (context, constraints) => ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
                         children: [
-                          Icon(
-                            Icons.history,
-                            size: 80,
-                            color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No recordings yet',
-                            style: TextStyle(
-                              color: ThemeHelper.getSecondaryTextColor(context),
-                              fontSize: 18,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Start recording to build your history',
-                            style: TextStyle(
-                              color: ThemeHelper.getSecondaryTextColor(context),
-                              fontSize: 14,
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                                minHeight: constraints.maxHeight),
+                            child: Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.history,
+                                    size: 80,
+                                    color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No recordings yet',
+                                    style: TextStyle(
+                                      color: ThemeHelper.getSecondaryTextColor(context),
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Start recording to build your history',
+                                    style: TextStyle(
+                                      color: ThemeHelper.getSecondaryTextColor(context),
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ],
@@ -455,6 +468,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     )
                   : ListView.builder(
                       controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16),
                       itemCount: _recordings.length + (_hasMore ? 1 : 0),
                       itemBuilder: (context, index) {
