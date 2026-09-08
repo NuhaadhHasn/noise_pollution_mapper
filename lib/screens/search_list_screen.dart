@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
@@ -21,6 +23,10 @@ class _SearchListScreenState extends State<SearchListScreen> {
   String _searchQuery = '';
   String _sortBy = 'noise'; // 'noise' or 'name'
 
+  // Debounce for search-as-you-type (audit map-3/uiux-6): cancelled and
+  // restarted on every keystroke so only the final pause triggers a request.
+  Timer? _searchDebounce;
+
   // Nominatim API search results
   List<Map<String, dynamic>> _nominatimResults = [];
   bool _isSearching = false;
@@ -28,6 +34,7 @@ class _SearchListScreenState extends State<SearchListScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -288,8 +295,10 @@ class _SearchListScreenState extends State<SearchListScreen> {
                       setState(() {
                         _searchQuery = value.toLowerCase();
                       });
-                      Future.delayed(const Duration(milliseconds: 500), () {
-                        if (value == _searchQuery) {
+                      _searchDebounce?.cancel();
+                      _searchDebounce =
+                          Timer(const Duration(milliseconds: 500), () {
+                        if (mounted) {
                           _searchWithNominatim(value);
                         }
                       });
