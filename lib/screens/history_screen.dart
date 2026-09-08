@@ -472,7 +472,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                         final doc = _recordings[index];
                         final data = doc.data() as Map<String, dynamic>;
-                        final db = (data['decibelLevel'] as num).toDouble();
+                        // social-2/uiux-7: docs from older app versions or
+                        // manual reports may lack decibelLevel — never hard-cast.
+                        final db =
+                            ((data['decibelLevel'] as num?) ?? 0).toDouble();
                         final location = data['locationName'] as String? ?? 'Unknown';
                         final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
                         final soundClass = data['soundClass'] as String?;
