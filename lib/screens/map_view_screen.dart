@@ -263,11 +263,14 @@ class _MapViewScreenState extends State<MapViewScreen> {
   DateTime? _lastLocationRequestTime;
   static const Duration _locationRequestDebounce = Duration(seconds: 30);
 
-  Future<void> _getCurrentLocation({bool forceRefresh = false}) async {
+  /// Returns true only when a real position was obtained (audit map-4:
+  /// denied/deniedForever must be surfaced, and callers must not move the
+  /// camera on failure).
+  Future<bool> _getCurrentLocation({bool forceRefresh = false}) async {
     // Prevent concurrent location requests (unless force refresh)
     if (!forceRefresh && _isGettingLocation) {
       AppLogger.debug('Map: Location request already in progress, skipping');
-      return;
+      return false;
     }
 
     // Debounce rapid requests (except for force refresh)
@@ -277,17 +280,56 @@ class _MapViewScreenState extends State<MapViewScreen> {
           now.difference(_lastLocationRequestTime!) <
               _locationRequestDebounce) {
         AppLogger.debug('Map: Location request debounced (too soon)');
-        return;
+        return false;
       }
     }
 
     _isGettingLocation = true;
     _lastLocationRequestTime = DateTime.now();
 
+    if (!mounted) {
+      _isGettingLocation = false;
+      return false;
+    }
+    // Capture context-dependent values before async gaps
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
-      final permission = await Geolocator.checkPermission();
+      LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
-        await Geolocator.requestPermission();
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        AppLogger.info('Map: Location permission not granted ($permission)');
+        if (mounted) {
+          setState(() {
+            _isLoadingLocation = false;
+          });
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                permission == LocationPermission.deniedForever
+                    ? 'Location permission permanently denied. '
+                          'Enable it in app settings to use your location.'
+                    : 'Location permission denied.',
+              ),
+              backgroundColor: AppTheme.highNoise,
+              duration: const Duration(seconds: 4),
+              action: permission == LocationPermission.deniedForever
+                  ? SnackBarAction(
+                      label: 'Settings',
+                      textColor: Colors.white,
+                      onPressed: () {
+                        Geolocator.openAppSettings();
+                      },
+                    )
+                  : null,
+            ),
+          );
+        }
+        return false;
       }
 
       // Check if location services are enabled
@@ -301,7 +343,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
         _isGettingLocation = false;
         // Show native Android location settings dialog
         _showNativeLocationDialog();
-        return;
+        return false;
       }
 
       final position = await Geolocator.getCurrentPosition();
@@ -314,6 +356,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
         // Move map to current location
         _mapController.move(_currentLocation, 13.0);
       }
+      return true;
     } catch (e) {
       AppLogger.error('Map: Error getting location', e);
       if (mounted) {
@@ -321,6 +364,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
           _isLoadingLocation = false;
         });
       }
+      return false;
     } finally {
       _isGettingLocation = false;
     }
@@ -1057,8 +1101,13 @@ class _MapViewScreenState extends State<MapViewScreen> {
                       heroTag: 'map_location_btn',
                       backgroundColor: ThemeHelper.getPrimaryColor(context),
                       onPressed: () async {
-                        await _getCurrentLocation(forceRefresh: true);
-                        _mapController.move(_currentLocation, 13.0);
+                        final located =
+                            await _getCurrentLocation(forceRefresh: true);
+                        // Only recenter when a real position was obtained
+                        // (audit map-4: never fly to the stale default).
+                        if (located) {
+                          _mapController.move(_currentLocation, 13.0);
+                        }
                       },
                       child: const Icon(Icons.my_location, color: Colors.white),
                     ),
