@@ -9,6 +9,34 @@ import '../services/yamnet_class_mapping.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
 
+/// Maps a reading time to a Daily-chart bucket index (0 = 23 clock-hours ago,
+/// 23 = the current clock hour), or null if outside the 24-bucket window.
+/// Buckets are aligned to clock hours so they match the "HHh" x-axis labels
+/// (analytics-2) — NOT rolling 60-minute windows.
+/// Top-level (not a State member) so it is unit-testable.
+int? dailyBucketFor(DateTime now, DateTime readingTime) {
+  final currentHour = DateTime(now.year, now.month, now.day, now.hour);
+  final readingHour = DateTime(
+      readingTime.year, readingTime.month, readingTime.day, readingTime.hour);
+  final hoursAgo = currentHour.difference(readingHour).inHours;
+  if (hoursAgo < 0 || hoursAgo > 23) return null;
+  return 23 - hoursAgo;
+}
+
+/// Maps a reading time to a Weekly/Monthly-chart bucket index
+/// (0 = [maxDays] calendar days ago, [maxDays] = today), or null if outside
+/// the window. Buckets are aligned to calendar dates (midnight boundaries)
+/// so they match the weekday / "MMM d" x-axis labels (analytics-2) — NOT
+/// rolling 24-hour windows.
+int? dayBucketFor(DateTime now, DateTime readingTime, int maxDays) {
+  final today = DateTime(now.year, now.month, now.day);
+  final readingDay =
+      DateTime(readingTime.year, readingTime.month, readingTime.day);
+  final daysAgo = today.difference(readingDay).inDays;
+  if (daysAgo < 0 || daysAgo > maxDays) return null;
+  return maxDays - daysAgo;
+}
+
 class AnalyticsScreen extends StatefulWidget {
   final bool isInAppShell;
 
@@ -204,17 +232,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       }
       if (readingTime == null) continue;
 
-      final int bucket;
+      final int? bucket;
       if (_selectedPeriod == 'Daily') {
-        final hoursAgo = now.difference(readingTime).inHours;
-        if (hoursAgo > 23) continue;
-        bucket = 23 - hoursAgo;
+        bucket = dailyBucketFor(now, readingTime);
       } else {
-        final daysAgo = now.difference(readingTime).inDays;
         final maxDays = _selectedPeriod == 'Monthly' ? 29 : 6;
-        if (daysAgo > maxDays) continue;
-        bucket = maxDays - daysAgo;
+        bucket = dayBucketFor(now, readingTime, maxDays);
       }
+      if (bucket == null) continue;
 
       buckets[bucket] = (buckets[bucket] ?? [])..add(db);
     }
