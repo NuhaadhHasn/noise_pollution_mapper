@@ -2,9 +2,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../utils/app_logger.dart';
 import '../utils/firestore_batch_utils.dart';
+import 'firebase_service.dart';
 
-/// Reconciles the VERIFIED FirebaseAuth email into Firestore
-/// (users/{uid}.email and noise_readings.userEmail).
+/// Reconciles the VERIFIED FirebaseAuth email into Firestore: the raw
+/// address into the owner-only `users/{uid}.email`, and the MASKED author
+/// label into the community-readable `noise_readings.userEmail` (sec-2).
 ///
 /// Invariant enforced (settings-9/flow6-06): Firestore identity fields are
 /// only ever written FROM the Auth email — never from unverified form
@@ -63,10 +65,19 @@ class ProfileSyncService {
           .where('userId', isEqualTo: user.uid)
           .get();
 
+      // sec-2: noise_readings is readable by every signed-in user
+      // (firestore.rules), so userEmail carries the MASKED author label —
+      // never the raw address. Writing authEmail verbatim here would
+      // re-expose the whole history on every email-change verification.
+      final authorDisplay = FirebaseService.authorLabel(
+        displayName: user.displayName,
+        email: authEmail,
+      );
+
       final updated = await FirestoreBatchUtils.applyInChunks(
         _firestore,
         snapshot.docs.map((doc) => doc.reference).toList(),
-        (batch, ref) => batch.update(ref, {'userEmail': authEmail}),
+        (batch, ref) => batch.update(ref, {'userEmail': authorDisplay}),
       );
 
       AppLogger.info(
