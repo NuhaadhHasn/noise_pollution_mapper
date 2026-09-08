@@ -16,6 +16,7 @@ import '../services/yamnet_class_mapping.dart';
 import '../services/heatmap_service.dart';
 import '../models/heatmap_point.dart';
 import '../utils/app_logger.dart';
+import '../utils/marker_key.dart';
 import '../utils/theme_helper.dart';
 import '../widgets/sync_status_indicator.dart';
 import '../widgets/heatmap_fab.dart';
@@ -196,9 +197,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
         );
       }
 
-      // Store noise level for cluster coloring
-      final markerKey = '${lat}_$lng';
-      _markerNoiseLevels[markerKey] = db;
+      // Store noise level for cluster coloring (shared helper — marker_key.dart)
+      _markerNoiseLevels[markerNoiseKey(lat, lng)] = db;
 
       markers.add(
         Marker(
@@ -679,18 +679,15 @@ class _MapViewScreenState extends State<MapViewScreen> {
 
                         // Simple cluster builder
                         builder: (context, markers) {
-                          // Extract noise levels for this cluster
+                          // Extract noise levels for this cluster via exact
+                          // key lookup (same shared helper as the writer).
                           final clusterNoiseLevels = markers.map((marker) {
                             final point = marker.point;
-                            final key = _markerNoiseLevels.keys.firstWhere(
-                              (k) => k.startsWith(
-                                '$point.latitude_$point.longitude',
-                              ),
-                              orElse: () => '',
-                            );
-                            return key.isNotEmpty
-                                ? _markerNoiseLevels[key]!
-                                : 50.0;
+                            return _markerNoiseLevels[markerNoiseKey(
+                                  point.latitude,
+                                  point.longitude,
+                                )] ??
+                                50.0;
                           }).toList();
 
                           // Calculate average noise level for cluster color
