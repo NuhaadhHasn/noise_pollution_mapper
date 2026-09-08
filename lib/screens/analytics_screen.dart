@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -72,10 +74,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // NOT on every setState (prevents Firestore re-subscription + chart flicker)
   Stream<QuerySnapshot>? _trendStream;
 
+  // Single subscription that drives ALL aggregates from the same live stream
+  // the trend chart renders (analytics-3/flow3-4), debounced so bursts of
+  // snapshot events (5 s save cadence while recording) coalesce into one
+  // rebuild (perf-4).
+  StreamSubscription<QuerySnapshot>? _statsSubscription;
+  Timer? _statsDebounce;
+
   @override
   void initState() {
     super.initState();
     _loadStatistics();
+  }
+
+  @override
+  void dispose() {
+    _statsDebounce?.cancel();
+    _statsSubscription?.cancel();
+    super.dispose();
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -108,8 +124,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // ─── Data loading ────────────────────────────────────────────────────────────
 
   Future<void> _loadStatistics() async {
-    // Capture period NOW — used at the end to detect if the user changed
-    // period again while this async call was in flight (race condition guard).
+    // Capture period NOW — used to ignore late events if the user changed
+    // period again while this subscription is live (race condition guard).
     final capturedPeriod = _selectedPeriod;
 
     // Check userId FIRST, before any Firestore calls.
@@ -119,91 +135,108 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       return;
     }
 
-    try {
-      final since = _getPeriodStartDate();
+    final since = _getPeriodStartDate();
+    final newStream = _firebaseService.getUserReadingsByPeriod(userId, since);
 
-      final newStream =
-          _firebaseService.getUserReadingsByPeriod(userId, since);
-
-      // Atomically update the stream AND clear all analytics data from
-      // the previous period. Without this, switching Monthly (0 data) →
-      // Weekly would show stale values until the new query resolves.
-      if (mounted) {
-        setState(() {
-          _trendStream = newStream;
-          _soundTypeCounts = {};
-          _pollutionCount = 0;
-          _ambientCount = 0;
-          _avgConfidence = 0.0;
-          _avgDb = 0;
-          _minDb = 0;
-          _maxDb = 0;
-          _totalHours = 0;
-          _totalCount = 0;
-        });
-      }
-
-      // Load stats and classification counts for the selected period.
-      // getUserReadingsByPeriodOnce uses .get() — not newStream.first — to avoid
-      // the broadcast-stream race: StreamBuilder subscribes to newStream via the
-      // setState above, Firestore emits its initial event to it, and newStream.first
-      // would miss that event (broadcast streams don't buffer), hanging forever.
-      final stats = await _firebaseService.calculateStatsByPeriod(since);
-      final snapshot =
-          await _firebaseService.getUserReadingsByPeriodOnce(userId, since);
-
-      final soundTypeCounts = <String, int>{};
-      int pollutionCount = 0;
-      int ambientCount = 0;
-      double totalConfidence = 0.0;
-      int confidenceCount = 0;
-
-      for (var doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-
-        final soundClass = data['soundClass'] as String?;
-        final soundType = data['soundType'] as String?;
-        final confidence = data['confidence'] as num?;
-
-        if (soundClass != null && soundClass.isNotEmpty) {
-          soundTypeCounts[soundClass] = (soundTypeCounts[soundClass] ?? 0) + 1;
-        }
-
-        if (soundType == 'Pollution') {
-          pollutionCount++;
-        } else if (soundType == 'Ambient') {
-          ambientCount++;
-        }
-
-        if (confidence != null) {
-          totalConfidence += confidence.toDouble();
-          confidenceCount++;
-        }
-      }
-
-      // Race condition guard: only apply results if the period the user sees
-      // right now is still the same one this query was issued for.
-      if (!mounted || _selectedPeriod != capturedPeriod) return;
-
+    // Atomically update the stream AND clear all analytics data from
+    // the previous period. Without this, switching Monthly (0 data) →
+    // Weekly would show stale values until the new query resolves.
+    if (mounted) {
       setState(() {
-        _avgDb = stats['avg'] ?? 0;
-        _minDb = stats['min'] ?? 0;
-        _maxDb = stats['max'] ?? 0;
-        // fb-6/flow3-7: one reading is saved every 5 s while recording
-        // (dashboard _saveTimer), so hours = count * 5 s / 3600.
-        _totalHours = (stats['count'] ?? 0) * 5 / 3600;
-        _totalCount = (stats['totalDocs'] ?? stats['count'] ?? 0).toInt();
-        _soundTypeCounts = soundTypeCounts;
-        _pollutionCount = pollutionCount;
-        _ambientCount = ambientCount;
-        _avgConfidence =
-            confidenceCount > 0 ? totalConfidence / confidenceCount : 0.0;
-        _isLoading = false;
+        _trendStream = newStream;
+        _soundTypeCounts = {};
+        _pollutionCount = 0;
+        _ambientCount = 0;
+        _avgConfidence = 0.0;
+        _avgDb = 0;
+        _minDb = 0;
+        _maxDb = 0;
+        _totalHours = 0;
+        _totalCount = 0;
       });
-    } catch (e) {
-      AppLogger.error('Error loading statistics', e);
-      if (mounted) setState(() => _isLoading = false);
     }
+
+    // ONE query per period (perf-4): the chart's StreamBuilder and this
+    // listener share the same broadcast snapshots() stream, and every
+    // aggregate on the screen is derived from its events — so stats, pie,
+    // breakdown, and chart always describe the same data and live-update
+    // together (analytics-3/flow3-4).
+    await _statsSubscription?.cancel();
+    _statsSubscription = newStream.listen(
+      (snapshot) {
+        // Debounce bursts (a new reading lands every 5 s while recording).
+        _statsDebounce?.cancel();
+        _statsDebounce = Timer(const Duration(milliseconds: 250), () {
+          _applySnapshot(snapshot, capturedPeriod);
+        });
+      },
+      onError: (Object e, StackTrace st) {
+        AppLogger.error('Error loading statistics', e, st);
+        if (mounted && _selectedPeriod == capturedPeriod) {
+          setState(() => _isLoading = false);
+        }
+      },
+    );
+  }
+
+  /// Derives every aggregate shown on this screen from one query snapshot.
+  void _applySnapshot(QuerySnapshot snapshot, String capturedPeriod) {
+    // Race condition guard: only apply results if the period the user sees
+    // right now is still the one this subscription was created for.
+    if (!mounted || _selectedPeriod != capturedPeriod) return;
+
+    final soundTypeCounts = <String, int>{};
+    int pollutionCount = 0;
+    int ambientCount = 0;
+    double totalConfidence = 0.0;
+    int confidenceCount = 0;
+    final dbValues = <double>[];
+
+    for (var doc in snapshot.docs) {
+      final data = doc.data() as Map<String, dynamic>;
+
+      // Null-safe: skip docs with missing/invalid decibelLevel for the
+      // dB stats (mirrors the old calculateStatsByPeriod behavior).
+      final db = (data['decibelLevel'] as num?)?.toDouble();
+      if (db != null && db.isFinite) dbValues.add(db);
+
+      final soundClass = data['soundClass'] as String?;
+      final soundType = data['soundType'] as String?;
+      final confidence = data['confidence'] as num?;
+
+      if (soundClass != null && soundClass.isNotEmpty) {
+        soundTypeCounts[soundClass] = (soundTypeCounts[soundClass] ?? 0) + 1;
+      }
+
+      if (soundType == 'Pollution') {
+        pollutionCount++;
+      } else if (soundType == 'Ambient') {
+        ambientCount++;
+      }
+
+      if (confidence != null) {
+        totalConfidence += confidence.toDouble();
+        confidenceCount++;
+      }
+    }
+
+    setState(() {
+      _avgDb = dbValues.isEmpty
+          ? 0
+          : dbValues.reduce((a, b) => a + b) / dbValues.length;
+      _minDb = dbValues.isEmpty ? 0 : dbValues.reduce((a, b) => a < b ? a : b);
+      _maxDb = dbValues.isEmpty ? 0 : dbValues.reduce((a, b) => a > b ? a : b);
+      // fb-6/flow3-7: one reading is saved every 5 s while recording
+      // (dashboard _saveTimer), so hours = count * 5 s / 3600.
+      _totalHours = dbValues.length * 5 / 3600;
+      _totalCount = snapshot.docs.length; // incl. unclassified docs
+      _soundTypeCounts = soundTypeCounts;
+      _pollutionCount = pollutionCount;
+      _ambientCount = ambientCount;
+      _avgConfidence =
+          confidenceCount > 0 ? totalConfidence / confidenceCount : 0.0;
+      _isLoading = false;
+    });
   }
 
   // ─── Trend chart helpers ─────────────────────────────────────────────────────
