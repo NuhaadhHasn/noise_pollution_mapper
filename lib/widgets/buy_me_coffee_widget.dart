@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_logger.dart';
@@ -104,14 +105,29 @@ class _BuyMeACoffeeWidgetState extends State<BuyMeACoffeeWidget> {
           IconButton(
             icon: const Icon(Icons.open_in_browser),
             onPressed: () async {
-              // Note: You may need to add url_launcher package
               AppLogger.info('Opening in browser: ${widget.url}');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Opening in browser...'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
+              final uri = Uri.tryParse(widget.url);
+              if (uri == null) {
+                AppLogger.warning('Invalid URL: ${widget.url}');
+                return;
+              }
+              var launched = false;
+              try {
+                launched = await launchUrl(
+                  uri,
+                  mode: LaunchMode.externalApplication,
+                );
+              } catch (e, stackTrace) {
+                AppLogger.error('Failed to open browser', e, stackTrace);
+              }
+              if (!launched && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Could not open browser'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              }
             },
             tooltip: 'Open in Browser',
           ),
