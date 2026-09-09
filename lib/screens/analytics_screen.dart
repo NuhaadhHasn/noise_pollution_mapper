@@ -12,6 +12,14 @@ import '../services/yamnet_class_mapping.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
 
+/// Monitoring hours implied by [readingCount] readings persisted one per
+/// save-timer tick, where each tick is [saveIntervalSeconds] apart
+/// (the `save_frequency` setting, 5-30 s — fb-6/flow3-7).
+///
+/// Top-level (not a State member) so it is unit-testable.
+double totalHoursFor(int readingCount, int saveIntervalSeconds) =>
+    readingCount * saveIntervalSeconds / 3600;
+
 /// Maps a reading time to a Daily-chart bucket index (0 = 23 clock-hours ago,
 /// 23 = the current clock hour), or null if outside the 24-bucket window.
 /// Buckets are aligned to clock hours so they match the "HHh" x-axis labels
@@ -180,7 +188,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     await _statsSubscription?.cancel();
     _statsSubscription = newStream.listen(
       (snapshot) {
-        // Debounce bursts (a new reading lands every 5 s while recording).
+        // Debounce bursts (a new reading lands every save-timer tick while
+        // recording — the `save_frequency` setting, 5-30 s).
         _statsDebounce?.cancel();
         _statsDebounce = Timer(const Duration(milliseconds: 250), () {
           _applySnapshot(snapshot, capturedPeriod);
@@ -248,7 +257,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       // user on 30 s would see Duration under-report by 6x.
       // Estimate, deliberately: readings persisted before a settings change
       // used the older interval, and the interval is not stored per document.
-      _totalHours = dbValues.length * _saveIntervalSeconds / 3600;
+      _totalHours = totalHoursFor(dbValues.length, _saveIntervalSeconds);
       _totalCount = snapshot.docs.length; // incl. unclassified docs
       _soundTypeCounts = soundTypeCounts;
       _pollutionCount = pollutionCount;

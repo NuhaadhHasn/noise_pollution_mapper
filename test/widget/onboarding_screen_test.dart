@@ -38,10 +38,9 @@ void main() {
       );
 
       await tester.pump();
-      expect(find.text('Get Started'), findsWidgets);
-      // arch-2: pre-existing failure — the button label is 'Get started',
-      // not 'Get Started'; see audit/06_ARCHITECTURE_AND_CODE_QUALITY.md
-    }, skip: true);
+      // The label is 'Get started' (onboarding_screen.dart:54).
+      expect(find.text('Get started'), findsWidgets);
+    });
 
     testWidgets('Skip button exists', (tester) async {
       await tester.pumpWidget(

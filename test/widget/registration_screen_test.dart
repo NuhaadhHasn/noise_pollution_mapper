@@ -15,12 +15,11 @@ void main() {
       // Verify we have 4 text fields (name, email, password, confirm password)
       expect(find.byType(TextFormField), findsNWidgets(4));
 
-      // Verify create account button exists
-      expect(find.text('Create Account'), findsOneWidget);
-      // arch-2: pre-existing failure — 'Create Account' is both the screen
-      // heading and the submit button label, so this finder matches two
-      // widgets; see audit/06_ARCHITECTURE_AND_CODE_QUALITY.md
-    }, skip: true);
+      // 'Create Account' is BOTH the screen heading (registration_screen.dart
+      // :177) and the submit button label (:421), so two widgets is correct
+      // here — asserting one was the test's bug, not the screen's.
+      expect(find.text('Create Account'), findsNWidgets(2));
+    });
 
     testWidgets('Name field accepts input', (tester) async {
       await tester.pumpWidget(
@@ -57,15 +56,13 @@ void main() {
         ),
       );
 
-      final createButton = find.text('Create Account');
-      expect(createButton, findsOneWidget);
+      // Two matches (heading, then button); the button is last in tree order.
+      final createLabels = find.text('Create Account');
+      expect(createLabels, findsNWidgets(2));
 
-      await tester.tap(createButton);
+      await tester.tap(createLabels.last);
       await tester.pump();
-      // arch-2: pre-existing failure — 'Create Account' is both the screen
-      // heading and the submit button label, so this finder matches two
-      // widgets; see audit/06_ARCHITECTURE_AND_CODE_QUALITY.md
-    }, skip: true);
+    });
 
     testWidgets('Back to Login link exists', (tester) async {
       await tester.pumpWidget(
@@ -74,9 +71,8 @@ void main() {
         ),
       );
 
-      expect(find.textContaining('Login'), findsWidgets);
-      // arch-2: pre-existing failure — the link reads 'Log In', not 'Login';
-      // see audit/06_ARCHITECTURE_AND_CODE_QUALITY.md
-    }, skip: true);
+      // The link reads 'Log In' (registration_screen.dart:445).
+      expect(find.textContaining('Log In'), findsWidgets);
+    });
   });
 }
