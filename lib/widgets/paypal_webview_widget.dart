@@ -22,7 +22,7 @@ class PayPalWebViewWidget extends StatefulWidget {
 }
 
 class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
-  late final InAppWebViewController _controller;
+  InAppWebViewController? _controller;
   bool _isLoading = true;
   bool _hasError = false;
   String _errorMessage = '';
@@ -60,7 +60,11 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
-              _controller.reload();
+              if (_controller == null) {
+                AppLogger.warning('Reload tapped before WebView was created');
+                return;
+              }
+              _controller?.reload();
               setState(() {
                 _isLoading = true;
                 _hasError = false;
@@ -252,7 +256,12 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
                       const SizedBox(height: 24),
                       ElevatedButton.icon(
                         onPressed: () {
-                          _controller.reload();
+                          if (_controller == null) {
+                            AppLogger.warning(
+                                'Try Again tapped before WebView was created');
+                            return;
+                          }
+                          _controller?.reload();
                           setState(() {
                             _isLoading = true;
                             _hasError = false;
