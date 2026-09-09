@@ -1,3 +1,5 @@
+> OUTDATED: .env/flutter_dotenv were removed for security (audit critic-02). See docs/SECURITY_ROTATION.md.
+
 # How to Find Your Firebase Configuration Values
 
 ## Method 1: From Firebase Console (Easiest)

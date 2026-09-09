@@ -32,12 +32,13 @@ class CategoryGuideData {
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryTraffic),
         examples: [
           'Cars, buses, and trucks',
-          'Motorcycles',
-          'Vehicle horns',
-          'Engine noise',
+          'Vehicle horns and engine noise',
+          'Emergency-vehicle sirens (police, ambulance, fire engine)',
+          'Car alarms and reversing beeps',
         ],
-        description: 'Vehicle noise from roads and traffic.',
-        yamnetInfo: '40+ vehicle-related YAMNet classes mapped',
+        description:
+            'Road vehicle noise, including emergency-vehicle sirens.',
+        yamnetInfo: '28 official vehicle and siren classes mapped directly',
       ),
 
       // 2. Tuk-tuk - Orange
@@ -47,11 +48,13 @@ class CategoryGuideData {
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryTuktuk),
         examples: [
           'Three-wheeler engines (Sri Lanka specific)',
-          'Scooters and mopeds',
-          'Small motorcycle engines',
+          'Motorcycles',
+          'Small two-stroke engines (keyword-detected)',
         ],
-        description: 'Three-wheeler and small engine vehicles common in Sri Lanka.',
-        yamnetInfo: 'Mapped from motorcycle/scooter YAMNet classes',
+        description:
+            'Three-wheeler and small engine vehicles common in Sri Lanka.',
+        yamnetInfo:
+            "1 official class ('Motorcycle') plus scooter/moped keyword fallback",
       ),
 
       // 3. Construction - Deep Orange
@@ -60,13 +63,13 @@ class CategoryGuideData {
         icon: Icons.construction,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryConstruction),
         examples: [
-          'Drilling and hammering',
-          'Heavy machinery',
-          'Sawing and grinding',
-          'Construction site noise',
+          'Drilling, hammering, and jackhammers',
+          'Sawing, sanding, and power tools',
+          'Explosions, blasting, and fireworks',
         ],
-        description: 'Noise from construction sites and building activities.',
-        yamnetInfo: '20+ tool and machinery YAMNet classes mapped',
+        description:
+            'Construction-site tools and impulsive blast-type noise.',
+        yamnetInfo: '23 official tool and impulse-noise classes mapped directly',
       ),
 
       // 4. Industrial - Brown
@@ -75,13 +78,13 @@ class CategoryGuideData {
         icon: Icons.factory,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryIndustrial),
         examples: [
-          'Industrial equipment',
-          'Factory machinery',
-          'Manufacturing noise',
-          'Industrial motors',
+          'Factory machinery, gears, and mechanisms',
+          'Fans and air conditioning',
+          'Chainsaws and lawn mowers',
+          'Electrical mains hum',
         ],
-        description: 'Industrial and factory machinery noise.',
-        yamnetInfo: '15+ industrial machinery YAMNet classes mapped',
+        description: 'Industrial and machinery noise.',
+        yamnetInfo: '14 official machinery classes mapped directly',
       ),
 
       // 5. Speech - Blue
@@ -91,12 +94,13 @@ class CategoryGuideData {
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categorySpeech),
         examples: [
           'Talking and conversation',
-          'Announcements and speeches',
-          'Phone calls',
-          'Group discussions',
+          'Shouting, crowds, and chatter',
+          'Laughing and crying',
+          'Children playing',
         ],
-        description: 'Human speech including conversations, announcements, and discussions.',
-        yamnetInfo: '35+ speech-related YAMNet classes mapped',
+        description:
+            'Human voices: conversation, crowds, laughter, and crying.',
+        yamnetInfo: '32 official human-voice classes mapped directly',
       ),
 
       // 6. Music - Purple
@@ -110,8 +114,10 @@ class CategoryGuideData {
           'Radio/TV music',
           'Humming or singing',
         ],
-        description: 'Musical sounds of any genre, including instruments and vocals.',
-        yamnetInfo: '100+ music-related YAMNet classes mapped',
+        description:
+            'Musical sounds of any genre, including instruments and vocals.',
+        yamnetInfo:
+            '88 official music classes mapped directly, plus genre keyword fallback',
       ),
 
       // 7. Religious - Yellow
@@ -120,13 +126,12 @@ class CategoryGuideData {
         icon: Icons.auto_stories,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryReligious),
         examples: [
-          'Religious chants and mantras',
-          'Temple bells',
-          'Church bells',
-          'Prayer calls',
+          'Church and temple bells',
+          'Chants and mantras',
+          'Gongs and chimes',
         ],
         description: 'Religious and spiritual sounds.',
-        yamnetInfo: '10+ religious sound YAMNet classes mapped',
+        yamnetInfo: '8 official bell and chant classes mapped directly',
       ),
 
       // 8. Market - Cyan
@@ -135,13 +140,13 @@ class CategoryGuideData {
         icon: Icons.storefront,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryMarket),
         examples: [
-          'Crowd noise',
-          'Market vendors',
-          'Shopping areas',
-          'Street vendors',
+          'Street market and bazaar ambience (keyword-detected)',
+          'Manually reported market noise',
         ],
-        description: 'Market and commercial area sounds.',
-        yamnetInfo: '15+ market and crowd YAMNet classes mapped',
+        description:
+            'Market and commercial-area sounds. No YAMNet class maps directly '
+            'to Market; crowd sounds are classified as Speech.',
+        yamnetInfo: 'Keyword fallback and manual reports only - no direct classes',
       ),
 
       // 9. Nature - Green
@@ -150,14 +155,14 @@ class CategoryGuideData {
         icon: Icons.park,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryNature),
         examples: [
-          'Birds chirping',
-          'Wind and rustling leaves',
-          'Rain and thunder',
-          'Water streams and waves',
-          'Animal sounds (pets, farm, wildlife)',
+          'Birds, insects, and animals (pets, farm, wildlife)',
+          'Water: streams, waterfalls, ocean waves',
+          'Rustling leaves and crackling fire',
         ],
-        description: 'Natural environmental sounds including weather, water, and animals.',
-        yamnetInfo: '80+ nature and animal YAMNet classes mapped',
+        description:
+            'Animal and natural-environment sounds. Rain, wind, and thunder '
+            'are classified as Weather.',
+        yamnetInfo: '78 official animal and nature classes mapped directly',
       ),
 
       // 10. Domestic - Amber
@@ -166,13 +171,12 @@ class CategoryGuideData {
         icon: Icons.home,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryDomestic),
         examples: [
-          'Household appliances',
-          'Cleaning sounds',
-          'Kitchen activities',
-          'Door knocks',
+          'Doors, knocks, and doorbells',
+          'Kitchen and appliance sounds',
+          'Telephones, clocks, and television',
         ],
         description: 'Domestic and household sounds.',
-        yamnetInfo: '20+ household sound YAMNet classes mapped',
+        yamnetInfo: '42 official household classes mapped directly',
       ),
 
       // 11. Alarm - Deep Red
@@ -181,13 +185,14 @@ class CategoryGuideData {
         icon: Icons.alarm,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryAlarm),
         examples: [
-          'Alarm systems',
-          'Sirens (emergency vehicles)',
-          'Warning signals',
-          'Alert tones',
+          'Alarm clocks and buzzers',
+          'Smoke detectors and fire alarms',
+          'Civil defense sirens',
         ],
-        description: 'Alarm and warning sounds including emergency sirens.',
-        yamnetInfo: '10+ alarm and siren YAMNet classes mapped',
+        description:
+            'Alarm and warning sounds. Emergency-vehicle sirens (police, '
+            'ambulance, fire engine) are classified as Traffic.',
+        yamnetInfo: '7 official alarm classes mapped directly',
       ),
 
       // 12. Body Sounds - Lavender
@@ -196,13 +201,15 @@ class CategoryGuideData {
         icon: Icons.accessibility_new,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryBodySounds),
         examples: [
-          'Cough, sneeze, yawn',
-          'Laughing, crying',
-          'Breathing, snoring',
-          'Heartbeat',
+          'Cough, sneeze, and sniff',
+          'Breathing, snoring, and heartbeat',
+          'Clapping, finger snapping, and footsteps',
+          'Whistling',
         ],
-        description: 'Sounds produced by the human body.',
-        yamnetInfo: '15+ body sound YAMNet classes mapped',
+        description:
+            'Sounds produced by the human body. Laughing and crying are '
+            'classified as Speech.',
+        yamnetInfo: '26 official body-sound classes mapped directly',
       ),
 
       // 13. Transport - Dark Blue
@@ -211,13 +218,15 @@ class CategoryGuideData {
         icon: Icons.directions_bus,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryTransport),
         examples: [
-          'Aircraft (airplanes, helicopters)',
-          'Trains and railways',
-          'Ships and boats',
-          'Public transport',
+          'Trains, railways, and subways',
+          'Aircraft and helicopters',
+          'Boats and ships',
+          'Bicycles and skateboards',
         ],
-        description: 'Transportation sounds including aircraft, trains, and ships.',
-        yamnetInfo: '25+ transport YAMNet classes mapped',
+        description:
+            'Rail, air, and water transport sounds. Buses are classified '
+            'as Traffic.',
+        yamnetInfo: '23 official transport classes mapped directly',
       ),
 
       // 14. Sports - Green (Sports)
@@ -226,13 +235,14 @@ class CategoryGuideData {
         icon: Icons.sports_soccer,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categorySports),
         examples: [
-          'Crowd cheering',
-          'Sports equipment (bats, balls)',
-          'Whistles (referee)',
-          'Stadium noise',
+          'Basketball bounce',
+          'Gym, stadium, and sports keywords (keyword-detected)',
         ],
-        description: 'Sports and recreational activity sounds.',
-        yamnetInfo: '10+ sports-related YAMNet classes mapped',
+        description:
+            'Sports and recreation sounds. Mostly keyword-detected or '
+            'manually reported.',
+        yamnetInfo:
+            "1 official class ('Basketball bounce') plus keyword fallback",
       ),
 
       // 15. Weather - Light Blue
@@ -241,13 +251,12 @@ class CategoryGuideData {
         icon: Icons.cloud,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryWeather),
         examples: [
-          'Rain and thunderstorms',
-          'Wind and gusts',
-          'Hail',
-          'Weather phenomena',
+          'Rain and raindrops',
+          'Thunder and thunderstorms',
+          'Wind',
         ],
         description: 'Weather and atmospheric sounds.',
-        yamnetInfo: '15+ weather-related YAMNet classes mapped',
+        yamnetInfo: '7 official weather classes mapped directly',
       ),
 
       // 16. Office - Deep Purple
@@ -256,13 +265,12 @@ class CategoryGuideData {
         icon: Icons.business,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryOffice),
         examples: [
-          'Office equipment (printers, copiers)',
-          'Keyboard typing',
-          'Phone ringing',
-          'Office ambience',
+          'Printers and cash registers',
+          'Radio',
+          'Cameras',
         ],
         description: 'Office and workplace sounds.',
-        yamnetInfo: '10+ office-related YAMNet classes mapped',
+        yamnetInfo: '5 official office and technology classes mapped directly',
       ),
 
       // 17. Other - Grey
@@ -271,13 +279,16 @@ class CategoryGuideData {
         icon: Icons.help_outline,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryOther),
         examples: [
-          'Finger snap, clapping',
+          'Silence and background noise',
+          'Static, white noise, and pink noise',
+          'Room tone (indoor/outdoor ambience)',
           'Unclassified sounds',
-          'Background noise',
-          'Static and hiss',
         ],
-        description: 'Sounds that do not fit into other categories or are unclassified.',
-        yamnetInfo: 'Remaining unmapped YAMNet classes',
+        description:
+            'Ambient room tone and sounds that do not fit other categories. '
+            'Finger snaps and clapping are classified as Body Sounds.',
+        yamnetInfo:
+            '28 official ambience/noise classes mapped directly, plus all unmatched sounds',
       ),
     ];
   }

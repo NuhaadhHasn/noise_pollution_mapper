@@ -1,0 +1,209 @@
+rules_version = '2';
+
+// =============================================================================
+// AUTHORITATIVE MERGED FIRESTORE RULESET — project noise-pollution-mapper-9ad3d
+// -----------------------------------------------------------------------------
+// This is the SINGLE source of truth for BOTH clients that share this Firebase
+// project:
+//   * APP       C:/Users/nuhaa/Downloads/Chatgpt/noise_pollution_mapper
+//               (Flutter, the ONLY writer; users view and input readings)
+//   * DASHBOARD C:/Users/nuhaa/Downloads/Chatgpt/noise-pollution-mapper-dashboard
+//               (React/Vite, separate git repo, READ-ONLY in the browser)
+//
+// The app repo's firebase.json is what wires rules to a deploy
+// ("firestore": {"rules": "firestore.rules"}); the dashboard repo has no
+// firebase.json at all. Therefore: keep the copy in the OTHER repo BYTE
+// IDENTICAL to this file, or DELETE it. Two divergent copies is exactly the
+// last-deploy-wins failure this file exists to end (audit finding sec-1:
+// the deployed rules were already inferred to be broader than the dashboard's
+// checked-in rules, because the app's community features work in production;
+// the dashboard's own DEPLOYMENT_GUIDE.md:232 documents the broader
+// signed-in read, contradicting its own firestore.rules).
+//
+// Anything reached through the Admin SDK — the dashboard's Cloud Functions
+// (functions/src/cache-export.ts) and its service-account scripts
+// (scripts/export-cache.js, scripts/export-cache-to-firestore.js) — BYPASSES
+// these rules entirely and therefore gets NO grant here.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // DASHBOARD-only admin definition. Kept as a users/{uid}.role document
+    // lookup because that is the admin concept the dashboard already ships
+    // (its firestore.rules), and because nothing in either codebase sets a
+    // custom auth claim, so a claim-based check would grant admin to nobody.
+    //
+    // COST: each evaluation costs document accesses against
+    // users/{caller uid}. It is deliberately called ONLY on the cross-user
+    // users read below — never on noise_readings — so ordinary app traffic
+    // and every owner-scoped read pay nothing for it (the `||` short-circuits
+    // on isOwner first).
+    //
+    // `.get('role', '')` is used instead of `.data.role` so a profile document
+    // with no role field (every document the app creates) evaluates to false
+    // rather than erroring. exists() guards the case where an admin account was
+    // created straight in the Firebase console and has no users document.
+    // OPERATIONAL REQUIREMENT (adversarial review, 2026-09-09): no code in
+    // EITHER repo ever writes a `role` field, so before 2026-09-09 this
+    // predicate was unsatisfiable for every account in existence and the
+    // dashboard's /analytics page (which calls fetchAllUsers() unconditionally)
+    // was silently dead. Admin is therefore provisioned MANUALLY: set
+    // users/{uid}.role = 'admin' on the accounts that need it. Done for the
+    // project owner's own uid. If you add an admin, set that field or their
+    // dashboard analytics will fail with permission-denied and no other symptom.
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid))
+             .data.get('role', '') == 'admin';
+    }
+
+    // -------------------------------------------------------------------------
+    // noise_readings — the shared community collection
+    // -------------------------------------------------------------------------
+    match /noise_readings/{readingId} {
+
+      // READ: any signed-in user, cross-user, no ownership filter.
+      // REQUIRED BY BOTH CLIENTS — this is the product, not a convenience:
+      //   APP: community feed stream (community_feed_screen.dart:64),
+      //        map view + search list (firebase_service.dart:224/233),
+      //        heatmap range query (firebase_service.dart:246),
+      //        dashboard today-count stream (dashboard_screen.dart:1171),
+      //        full-collection fetch (firebase_service.dart:319).
+      //   DASHBOARD (browser): full-collection onSnapshot
+      //        (src/pages/DashboardPage.tsx:33) and the IndexedDB sync that
+      //        fetches ALL readings with no userId filter
+      //        (src/utils/syncManager.ts — MAX_INITIAL_READINGS = 0 — plus
+      //        forceFullSync and the delta `timestamp >` query).
+      // Because this single grant already covers every dashboard read here,
+      // noise_readings needs NO isAdmin() clause — that is why the dashboard's
+      // "admins can read all readings" clause is dropped rather than merged.
+      // Privacy note (sec-2): this collection is deliberately world-readable
+      // to signed-in users, which is why the app stores only a MASKED author
+      // label in `userEmail`, never a raw address.
+      allow read: if isSignedIn();
+
+      // CREATE: APP only (the dashboard browser performs zero writes — no
+      // setDoc/addDoc/updateDoc/deleteDoc anywhere in its src/).
+      // Covers the online capture path (firebase_service.dart:182 .add()) and
+      // the FIRST write of an offline recording under its deterministic id
+      // (sync_service.dart:338), plus the history undo/restore re-write
+      // (firebase_service.dart:308 set() on a deleted id, which lands as a
+      // create). Document must be stamped with the caller's own uid.
+      allow create: if isSignedIn()
+        && request.resource.data.userId is string
+        && request.resource.data.userId == request.auth.uid;
+
+      // UPDATE/DELETE: owner of the EXISTING document — resource.data, NOT
+      // request.resource.data. This is load-bearing in three places and MUST
+      // NOT be "tightened" to the incoming document:
+      //   1. delete-account anonymization (settings_screen_enhanced.dart:930)
+      //      rewrites userId to 'deleted_user_<8-char prefix>' so community
+      //      data survives account deletion. Checking the incoming doc would
+      //      reject that write. After it lands, nobody can touch the doc again.
+      //   2. cluster 02 idempotent offline sync: a retry after a lost ack is a
+      //      set() on the SAME deterministic document id, which Firestore
+      //      evaluates as an UPDATE, not a create (sync_service.dart:338).
+      //   3. email-change propagation batch-updates `userEmail` across the
+      //      owner's readings (profile_sync_service.dart:64-84), as does
+      //      clear-history's batch delete (settings_screen_enhanced.dart:1071)
+      //      and single-row delete (firebase_service.dart:301).
+      // FIX (adversarial review, 2026-09-09): the ownership test alone
+      // constrains only the PRE-write document, so an owner could reassign
+      // their own reading to an ARBITRARY uid — planting data attributed to
+      // another user. The incoming userId must therefore either stay
+      // unchanged, or become a 'deleted_user_*' value (the one legitimate
+      // rewrite, performed by delete-account anonymization).
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId is string
+        && (request.resource.data.userId == resource.data.userId
+            || request.resource.data.userId.matches('^deleted_user_.*'));
+
+      allow delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // -------------------------------------------------------------------------
+    // users/{userId} — profile documents
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+
+      // READ: owner, or an admin.
+      //   APP (owner get): profile_sync_service.dart:43.
+      //   DASHBOARD (admin cross-user LIST): src/services/userService.ts
+      //      fetchAllUsers() does getDocs(collection(db,'users')) with no
+      //      filter, called from src/pages/AnalyticsPage.tsx:27 to label rows
+      //      with author emails. THIS is the dashboard admin feature that the
+      //      app-only ruleset broke (it has no admin clause), so the clause is
+      //      merged in here — and nowhere else.
+      // List semantics: an unfiltered list is allowed only when the condition
+      // holds without inspecting resource, i.e. only for admins. A non-admin
+      // still gets their own document by id via isOwner and cannot list the
+      // collection. Ordinary owner reads never trigger the isAdmin() lookup.
+      allow read: if isOwner(userId) || isAdmin();
+
+      // CREATE: owner only — APP registration (registration_screen.dart:58).
+      // `role` may never be self-assigned: without this guard, any user could
+      // write role:'admin' into their own profile and unlock the cross-user
+      // read above. Admin must be granted out-of-band (console / Admin SDK).
+      allow create: if isOwner(userId)
+        && !('role' in request.resource.data);
+
+      // UPDATE: owner only — APP display-name edit (edit_profile_screen.dart:90)
+      // and verified-email reconciliation (profile_sync_service.dart:55), both
+      // set(merge:true). `role` must be unchanged by the write; on a merge
+      // write request.resource.data is the RESULTING document, so an untouched
+      // role compares equal and these calls pass. Same escalation guard as
+      // create. The dashboard never writes profiles.
+      allow update: if isOwner(userId)
+        && request.resource.data.get('role', '') == resource.data.get('role', '');
+
+      // DELETE: owner only. Not currently exercised — the delete-account flow
+      // anonymizes readings and deletes the Auth user but leaves this document
+      // behind — kept so a user can remove their own profile.
+      allow delete: if isOwner(userId);
+    }
+
+    // -------------------------------------------------------------------------
+    // app_config/{docId} — server-owned public display config
+    // -------------------------------------------------------------------------
+    // APP ONLY (donation_service.dart:20 reads app_config/donations).
+    // REQUIRED (playbook SS4.1 / cluster 01 Step 4): without this rule the read
+    // fails with permission-denied and donations are permanently "not
+    // configured" — the exact regression that deploying the dashboard's
+    // ruleset (which has no app_config block) causes. Contains only public
+    // values (PayPal business email used in a public URL, sandbox flag, Buy Me
+    // a Coffee URL); merchant secrets must never live here (critic-02).
+    // Client writes are denied outright — seeded from the console/Admin SDK.
+    match /app_config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Catch-all deny. Every collection either client actually touches from a
+    // rules-governed SDK is named above: noise_readings, users, app_config.
+    // Notably NOT granted: `cache/noise_readings_full`, written by
+    // scripts/export-cache-to-firestore.js in the dashboard repo — that is an
+    // Admin SDK script, it bypasses rules, and no browser or app code reads
+    // that document, so it stays denied for clients.
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

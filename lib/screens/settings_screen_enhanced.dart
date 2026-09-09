@@ -8,7 +8,10 @@ import 'login_screen.dart';
 import 'edit_profile_screen.dart';
 import 'classification_guide_screen.dart';
 import 'donation_screen.dart';
+import '../services/notification_service.dart';
 import '../utils/theme_helper.dart';
+import '../utils/firestore_batch_utils.dart';
+import '../utils/app_logger.dart';
 
 class SettingsScreenEnhanced extends StatefulWidget {
   final bool isInAppShell;
@@ -21,15 +24,12 @@ class SettingsScreenEnhanced extends StatefulWidget {
 
 class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
   // Settings values
-  bool _useDbA = true;
-  bool _useFastResponse = true;
   bool _notificationsEnabled = true;
   bool _darkMode = true;
   bool _anonymizeLocation = false;
   bool _highNoiseAlerts = true;
   bool _dailyReminders = false;
-  bool _shareDataWithResearchers = true;
-  int _recordingDuration = 10; // seconds
+  int _recordingDurationMinutes = 10; // minutes (auto-stop)
   int _saveFrequency = 5; // seconds
   double _dbThreshold = 70.0;
 
@@ -41,18 +41,28 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    // Cleanup of legacy keys whose controls were removed (settings-6):
+    // phone hardware (noise_meter) exposes no A/C weighting or fast/slow
+    // response time, so these settings could never do anything.
+    await prefs.remove('use_dba');
+    await prefs.remove('use_fast_response');
+    // arch-1: 'share_data_with_researchers' had zero backend consumers;
+    // all readings already flow to the shared community collection, and the
+    // real privacy control is 'anonymize_location' (playbook 04).
+    await prefs.remove('share_data_with_researchers');
+    // settings-6: old key stored SECONDS and was never consumed; replaced by
+    // 'recording_duration_minutes' (auto-stop). Removed so a stored value is
+    // never reinterpreted under the new unit.
+    await prefs.remove('recording_duration');
     if (mounted) {
       setState(() {
-        _useDbA = prefs.getBool('use_dba') ?? true;
-        _useFastResponse = prefs.getBool('use_fast_response') ?? true;
         _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
         _highNoiseAlerts = prefs.getBool('high_noise_alerts') ?? true;
         _dailyReminders = prefs.getBool('daily_reminders') ?? false;
-        _shareDataWithResearchers =
-            prefs.getBool('share_data_with_researchers') ?? true;
         _darkMode = prefs.getBool('dark_mode') ?? true;
         _anonymizeLocation = prefs.getBool('anonymize_location') ?? false;
-        _recordingDuration = prefs.getInt('recording_duration') ?? 10;
+        _recordingDurationMinutes =
+            prefs.getInt('recording_duration_minutes') ?? 10;
         _saveFrequency = prefs.getInt('save_frequency') ?? 5;
         _dbThreshold = prefs.getDouble('db_threshold') ?? 70.0;
       });
@@ -65,6 +75,36 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     if (value is int) await prefs.setInt(key, value);
     if (value is double) await prefs.setDouble(key, value);
     if (value is String) await prefs.setString(key, value);
+  }
+
+  /// Runs an OS-level notification schedule/cancel and keeps the switch
+  /// honest. Scheduling can fail for reasons the UI cannot predict (a dead
+  /// timezone database, an OEM alarm policy), and an unguarded failure left
+  /// the toggle reading ON with no schedule behind it and no feedback.
+  /// On failure the pref and the switch are both reverted.
+  Future<void> _applyReminderSchedule({
+    required Future<void> Function() action,
+    required String prefKey,
+    required bool requested,
+    required void Function(bool) revert,
+  }) async {
+    try {
+      await action();
+    } catch (e, st) {
+      AppLogger.error('Daily reminder schedule failed', e, st);
+      await _saveSetting(prefKey, !requested);
+      if (!mounted) return;
+      setState(() => revert(!requested));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+              'Could not update the daily reminder. Check the alarm '
+              'permission for this app and try again.'),
+          backgroundColor: ThemeHelper.getErrorColor(context),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   @override
@@ -87,20 +127,6 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           // APPEARANCE SECTION
           _buildSectionHeader('Appearance', Icons.palette),
           _buildSettingCard([
-            _buildToggleSetting('Decibel Scale', 'dBA', 'dBC', _useDbA, (val) {
-              setState(() => _useDbA = val);
-              _saveSetting('use_dba', val);
-            }),
-            _buildToggleSetting(
-              'Response Time',
-              'Fast',
-              'Slow',
-              _useFastResponse,
-              (val) {
-                setState(() => _useFastResponse = val);
-                _saveSetting('use_fast_response', val);
-              },
-            ),
             _buildSwitchSetting('Dark Mode', Icons.dark_mode, _darkMode, (val) {
               setState(() => _darkMode = val);
               _saveSetting('dark_mode', val);
@@ -127,16 +153,30 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
 
           // MEASUREMENT SECTION
           _buildSectionHeader('Measurement', Icons.mic),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Readings use your phone microphone\'s built-in response. '
+              'Professional A/C frequency weighting and fast/slow response '
+              'modes are not supported by phone hardware.',
+              style: TextStyle(
+                color: ThemeHelper.getSecondaryTextColor(
+                  context,
+                ).withValues(alpha: 0.8),
+                fontSize: 12,
+              ),
+            ),
+          ),
           _buildSettingCard([
             _buildSliderSetting(
               'Recording Duration',
-              _recordingDuration.toDouble(),
+              _recordingDurationMinutes.toDouble(),
               1,
               60,
-              'seconds',
+              'min (auto-stop)',
               (val) {
-                setState(() => _recordingDuration = val.toInt());
-                _saveSetting('recording_duration', val.toInt());
+                setState(() => _recordingDurationMinutes = val.toInt());
+                _saveSetting('recording_duration_minutes', val.toInt());
               },
             ),
             _buildSliderSetting(
@@ -172,9 +212,26 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
               'Enable Notifications',
               Icons.notifications_active,
               _notificationsEnabled,
-              (val) {
+              (val) async {
                 setState(() => _notificationsEnabled = val);
-                _saveSetting('notifications_enabled', val);
+                await _saveSetting('notifications_enabled', val);
+                if (!val) {
+                  // OS-level schedules must be torn down explicitly; in-app
+                  // alerts already check this pref at fire time.
+                  await _applyReminderSchedule(
+                    action: NotificationService.cancelDailyReminder,
+                    prefKey: 'notifications_enabled',
+                    requested: val,
+                    revert: (v) => _notificationsEnabled = v,
+                  );
+                } else if (_dailyReminders) {
+                  await _applyReminderSchedule(
+                    action: NotificationService.scheduleDailyReminder,
+                    prefKey: 'notifications_enabled',
+                    requested: val,
+                    revert: (v) => _notificationsEnabled = v,
+                  );
+                }
               },
             ),
             _buildSwitchSetting(
@@ -190,9 +247,18 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
               'Daily Reminders',
               Icons.alarm,
               _dailyReminders,
-              (val) {
+              (val) async {
                 setState(() => _dailyReminders = val);
-                _saveSetting('daily_reminders', val);
+                // Save first: scheduleDailyReminder re-reads prefs.
+                await _saveSetting('daily_reminders', val);
+                await _applyReminderSchedule(
+                  action: val
+                      ? NotificationService.scheduleDailyReminder
+                      : NotificationService.cancelDailyReminder,
+                  prefKey: 'daily_reminders',
+                  requested: val,
+                  revert: (v) => _dailyReminders = v,
+                );
               },
             ),
           ]),
@@ -209,15 +275,6 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
               (val) {
                 setState(() => _anonymizeLocation = val);
                 _saveSetting('anonymize_location', val);
-              },
-            ),
-            _buildSwitchSetting(
-              'Share Data with Researchers',
-              Icons.science,
-              _shareDataWithResearchers,
-              (val) {
-                setState(() => _shareDataWithResearchers = val);
-                _saveSetting('share_data_with_researchers', val);
               },
             ),
             _buildNavigationItem('Privacy Policy', Icons.policy, () {}),
@@ -364,71 +421,6 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(children: children),
-    );
-  }
-
-  // Toggle setting (dBA/dBC style)
-  Widget _buildToggleSetting(
-    String title,
-    String left,
-    String right,
-    bool isLeft,
-    Function(bool) onChanged,
-  ) {
-    final isDark = ThemeHelper.isDark(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: TextStyle(color: ThemeHelper.getTextColor(context)),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: isDark
-                  ? AppTheme.darkPurple
-                  : ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                _buildToggleButton(left, isLeft, () => onChanged(true)),
-                _buildToggleButton(right, !isLeft, () => onChanged(false)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildToggleButton(String text, bool isSelected, VoidCallback onTap) {
-    final isDark = ThemeHelper.isDark(context);
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? ThemeHelper.getPrimaryColor(context)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            color: isSelected
-                ? Colors.white
-                : isDark
-                ? AppTheme.textGray
-                : ThemeHelper.getTextColor(context).withValues(alpha: 0.7),
-            fontSize: 13,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
     );
   }
 
@@ -824,8 +816,12 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     );
   }
 
-  // Delete account confirmation
+  // Delete account confirmation. Collects the password up front because
+  // deletion re-authenticates BEFORE touching any data
+  // (settings-1/sec-3/flow6-01).
   void _showDeleteAccountConfirmation() {
+    final passwordController = TextEditingController();
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -834,9 +830,28 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           'Delete Account?',
           style: TextStyle(color: Colors.red),
         ),
-        content: Text(
-          'This will delete your account, but your noise recordings will be preserved as anonymous community data to help reduce noise pollution. This action cannot be undone.',
-          style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'This will delete your account, but your noise recordings will be preserved as anonymous community data to help reduce noise pollution. This action cannot be undone.\n\nEnter your password to confirm.',
+              style: TextStyle(
+                color: ThemeHelper.getSecondaryTextColor(context),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              style: TextStyle(color: ThemeHelper.getTextColor(context)),
+              decoration: InputDecoration(
+                labelText: 'Password',
+                labelStyle: TextStyle(
+                  color: ThemeHelper.getSecondaryTextColor(context),
+                ),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -850,8 +865,17 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           ),
           TextButton(
             onPressed: () async {
+              final password = passwordController.text.trim();
+              if (password.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter your password to confirm'),
+                  ),
+                );
+                return;
+              }
               Navigator.pop(context);
-              await _deleteAccount();
+              await _deleteAccount(password);
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
@@ -860,11 +884,18 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     );
   }
 
-  // Delete account implementation
-  Future<void> _deleteAccount() async {
+  // Delete account implementation.
+  // Order is CRITICAL (settings-1/sec-3/flow6-01):
+  //   1. Re-authenticate — the only step that can fail with
+  //      requires-recent-login, so it must fail BEFORE any data is
+  //      touched (mirrors the change-password flow above).
+  //   2. Anonymize readings in chunked batches (arch-4/flow6-05).
+  //   3. Delete the Firebase Auth user.
+  Future<void> _deleteAccount(String password) async {
+    var loadingShown = false;
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
+      if (user == null || user.email == null) {
         throw Exception('No user logged in');
       }
 
@@ -879,8 +910,19 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           ),
         ),
       );
+      loadingShown = true;
 
-      // Step 1: Anonymize user's noise readings (DON'T DELETE - preserve community data!)
+      // Step 1: Re-authenticate FIRST. Destructive writes only run once
+      // Firebase has accepted a fresh credential, so a stale session can
+      // never orphan the user's data.
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: password,
+      );
+      await user.reauthenticateWithCredential(credential);
+
+      // Step 2: Anonymize user's noise readings (DON'T DELETE - preserve
+      // community data!) in chunked batches.
       final uid = user.uid;
       final firestore = FirebaseFirestore.instance;
 
@@ -889,23 +931,23 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           .where('userId', isEqualTo: uid)
           .get();
 
-      // Update all readings to anonymize user info (preserve the valuable data)
-      final batch = firestore.batch();
-      for (var doc in snapshot.docs) {
-        batch.update(doc.reference, {
+      await FirestoreBatchUtils.applyInChunks(
+        firestore,
+        snapshot.docs.map((doc) => doc.reference).toList(),
+        (batch, ref) => batch.update(ref, {
           'userEmail': 'Deleted User',
           'userId': 'deleted_user_${uid.substring(0, 8)}',
           // Keep partial ID for data integrity
-        });
-      }
-      await batch.commit();
+        }),
+      );
 
-      // Step 2: Delete the Firebase Auth user (but data stays!)
+      // Step 3: Delete the Firebase Auth user (but data stays!)
       await user.delete();
 
       // Close loading dialog
       if (!mounted) return;
       Navigator.pop(context); // Close loading
+      loadingShown = false;
 
       // Navigate to login screen and clear all previous routes
       if (!mounted) return;
@@ -922,14 +964,19 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
         ),
       );
     } on FirebaseAuthException catch (e) {
+      AppLogger.error('[Settings] Account deletion failed', e);
+
       // Close loading dialog if open
-      if (mounted) {
+      if (loadingShown && mounted) {
         Navigator.pop(context);
       }
 
       String errorMessage = 'Failed to delete account';
 
-      if (e.code == 'requires-recent-login') {
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        errorMessage =
+            'Password is incorrect. Your account and data were NOT changed.';
+      } else if (e.code == 'requires-recent-login') {
         errorMessage =
             'Please log out and log in again before deleting your account';
       } else {
@@ -942,8 +989,10 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
         );
       }
     } catch (e) {
+      AppLogger.error('[Settings] Account deletion failed', e);
+
       // Close loading dialog if open
-      if (mounted) {
+      if (loadingShown && mounted) {
         Navigator.pop(context);
       }
 
@@ -1023,12 +1072,13 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           .where('userId', isEqualTo: uid)
           .get();
 
-      // Delete all readings using batch delete
-      final batch = firestore.batch();
-      for (var doc in snapshot.docs) {
-        batch.delete(doc.reference);
-      }
-      await batch.commit();
+      // Delete all readings in chunked batches (arch-4/flow6-05: a single
+      // WriteBatch fails outright over 500 operations)
+      await FirestoreBatchUtils.applyInChunks(
+        firestore,
+        snapshot.docs.map((doc) => doc.reference).toList(),
+        (batch, ref) => batch.delete(ref),
+      );
 
       // Close loading dialog
       if (!mounted) return;

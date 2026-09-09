@@ -5,6 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'dart:typed_data';
 import '../theme/app_theme.dart';
@@ -12,6 +13,7 @@ import '../utils/animations.dart';
 import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
 import '../utils/shared_app_state.dart';
+import '../utils/noise_stats.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
 import '../widgets/sync_status_indicator.dart';
@@ -20,6 +22,7 @@ import 'splash_screen.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../services/sound_classification_service.dart';
+import '../services/sync_service.dart';
 import 'community_feed_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -57,11 +60,28 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   double _avgDb = 0.0;
   final List<double> _dbHistory = [];
 
+  // perf-2: live meter values are published through notifiers instead of
+  // setState, so only the gauge / stats row / chart subtrees rebuild on the
+  // several-per-second NoiseReading events - not the whole dashboard.
+  final ValueNotifier<double> _currentDbNotifier = ValueNotifier<double>(0.0);
+  final ValueNotifier<int> _historyVersion = ValueNotifier<int>(0);
+
   // Location tracking
   String _locationName = 'Fetching location...';
   double _latitude = 6.9271; // Colombo default
   double _longitude = 79.8612;
   bool _isLocationLoading = true;
+  // dash-4/flow2-4: true only after a real GPS fix. Reading saves are gated
+  // on this flag so the hardcoded Colombo default above is never persisted.
+  bool _hasRealLocation = false;
+
+  // dash-6: timestamp of the last NoiseReading delivered by the meter stream.
+  // The save timer refuses to persist _currentDb if the stream has stalled.
+  DateTime? _lastNoiseReadingAt;
+
+  // dash-6: Dashboard's index in MainAppShell's IndexedStack
+  // (Map=0, Analytics=1, Dashboard=2, History=3, Settings=4).
+  static const int _dashboardTabIndex = 2;
 
   // Timer for periodic Firebase saves (don't save every reading, save every 5 seconds)
   Timer? _saveTimer;
@@ -69,8 +89,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // Timer for periodic sound classification (every 5 seconds)
   Timer? _classificationTimer;
 
+  // One-shot auto-stop timer ('recording_duration_minutes' pref — settings-6)
+  Timer? _autoStopTimer;
+
   // Track if we've already shown alert for current high noise session
   bool _hasShownHighNoiseAlert = false;
+
+  // flow6-04/settings-4: alert prefs written by SettingsScreenEnhanced
+  // (keys 'high_noise_alerts' and 'db_threshold', defaults true / 70.0 -
+  // must match settings_screen_enhanced.dart lines 49 and 57).
+  bool _highNoiseAlertsEnabled = true;
+  double _alertThresholdDb = 70.0;
+
+  // Track if we've already surfaced a save failure for the current
+  // recording session (avoid a snackbar every 5 s) — fb-1
+  bool _hasShownSaveErrorSnackbar = false;
 
   // Sound Classification Results
   ClassificationResult? _currentClassification;
@@ -91,16 +124,37 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // dash-6: the IndexedStack keeps this screen mounted when the user
+    // switches tabs, so dispose() never fires - listen for tab changes.
+    SharedAppState.currentTabIndex.addListener(_onShellTabChanged);
     _initializeAudioRecorder();
     _requestPermissions();
+    _loadAlertPrefs();
     // Call location immediately (no delay - delay causes race condition)
     _getCurrentLocation();
     AppLogger.debug('User ID: ${FirebaseAuth.instance.currentUser?.uid}');
   }
 
+  // dash-6: invoked whenever MainAppShell switches tabs
+  void _onShellTabChanged() {
+    if (widget.isInAppShell &&
+        SharedAppState.currentTabIndex.value != _dashboardTabIndex &&
+        _isRecording) {
+      AppLogger.info('Dashboard hidden by tab switch, stopping recording');
+      _stopRecording();
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    // dash-6: recording must not continue invisibly in the background
+    if ((state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden) &&
+        _isRecording) {
+      AppLogger.info('App backgrounded while recording, stopping recording');
+      _stopRecording();
+    }
     // When user returns from settings (app resumes), check if location is now enabled
     if (state == AppLifecycleState.resumed) {
       AppLogger.info('📍 App resumed, checking if location was enabled...');
@@ -154,6 +208,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       // Don't auto-start recording - let user tap the button
     } else {
       _showPermissionDeniedDialog();
+    }
+  }
+
+  // flow6-04/settings-4: load alert prefs written by SettingsScreenEnhanced
+  Future<void> _loadAlertPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _highNoiseAlertsEnabled = prefs.getBool('high_noise_alerts') ?? true;
+      _alertThresholdDb = prefs.getDouble('db_threshold') ?? 70.0;
+      AppLogger.debug(
+        'Alert prefs loaded: enabled=$_highNoiseAlertsEnabled, '
+        'threshold=${_alertThresholdDb.toStringAsFixed(0)} dB',
+      );
+    } catch (e) {
+      AppLogger.error('Failed to load alert preferences', e);
     }
   }
 
@@ -236,11 +305,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         },
       );
 
+      _hasRealLocation = true;
       if (mounted) {
         setState(() {
           _latitude = position.latitude;
           _longitude = position.longitude;
         });
+      } else {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
       }
 
       AppLogger.info('Got GPS coordinates: $_latitude, $_longitude');
@@ -357,21 +430,59 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     }
   }
 
+  // dash-4/flow2-4: _locationName holds UI status strings on failure paths
+  // (set at _getCurrentLocation). These must never be persisted as a
+  // reading's locationName.
+  bool get _locationNameIsStatus =>
+      _locationName == 'Fetching location...' ||
+      _locationName == 'Location permission denied' ||
+      _locationName == 'Location services disabled';
+
   // Start noise measurement
   void _startRecording() async {
-    try {
-      // CRITICAL: Check if already recording - prevent duplicate starts
-      if (_isRecording) {
-        AppLogger.warning('Already recording, ignoring start request');
-        return;
-      }
+    // CRITICAL (dash-2): check-and-set the guard SYNCHRONOUSLY, before any
+    // await. A second tap during async setup now returns here instead of
+    // starting a duplicate noise subscription + save timer.
+    if (_isRecording) {
+      AppLogger.warning('Already recording, ignoring start request');
+      return;
+    }
+    setState(() {
+      _isRecording = true;
+      _hasShownSaveErrorSnackbar = false;
+    });
 
-      // CRITICAL: Check if audio recorder is already running
+    try {
+      // flow6-04: pick up any threshold/toggle change made in Settings
+      await _loadAlertPrefs();
+
+      // Defensively cancel anything a previous session may have leaked
+      await _noiseSubscription?.cancel();
+      _noiseSubscription = null;
+      _saveTimer?.cancel();
+      _saveTimer = null;
+      _classificationTimer?.cancel();
+      _classificationTimer = null;
+      await _audioStreamSubscription?.cancel();
+      _audioStreamSubscription = null;
+      _lastNoiseReadingAt = null;
+
+      // CRITICAL: if the audio recorder is somehow still running, stop it
+      // directly. Do NOT call _stopRecording() here - it would reset the
+      // _isRecording flag we just set.
       if (_audioRecorder != null && _audioRecorder!.isRecording) {
         AppLogger.warning('Audio recorder already running, stopping first...');
-        _stopRecording(); // Don't await - it's void
-        // Small delay to ensure clean state
-        await Future.delayed(const Duration(milliseconds: 200));
+        try {
+          await _audioRecorder!.stopRecorder().timeout(
+            const Duration(seconds: 3),
+            onTimeout: () {
+              AppLogger.warning('stopRecorder() timed out during restart');
+              return; // Explicit return to satisfy nullable return type
+            },
+          );
+        } catch (e) {
+          AppLogger.error('Failed to stop stale audio recorder', e);
+        }
       }
 
       // Location already fetched on screen start, no need to request again
@@ -381,62 +492,73 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _noiseSubscription = _noiseMeter?.noise.listen(
         (NoiseReading reading) {
           if (!_isRecording || !mounted) return;
-          
-          setState(() {
-            // Apply calibration offset for phone microphone
-            // Phone mics read 10-20 dB higher than actual SPL
-            // This offset adjusts readings to realistic environmental values:
-            // - Quiet room: 30-40 dB (was showing 10-20 dB)
-            // - Normal conversation: 60-70 dB (was showing 30-50 dB)
-            // - Loud speech: 80-90 dB (was showing 50-60 dB)
-            // - Traffic: 70-85 dB
-            const double calibrationOffset = 10.0;
-            final rawDb = reading.meanDecibel - calibrationOffset;
-            
-            // Validate dB range (filter unrealistic values)
-            // Environmental sounds typically range from 20-120 dB
-            if (rawDb < 10 || rawDb > 130) {
-              AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
-              return; // Don't add invalid readings
+          // dash-6: record stream liveness for the save timer's stall check
+          _lastNoiseReadingAt = DateTime.now();
+
+          // perf-2: no setState here. Values are published through
+          // _currentDbNotifier / _historyVersion so only the gauge, stats
+          // row, and chart subtrees rebuild per reading.
+
+          // Apply calibration offset for phone microphone
+          // Phone mics read 10-20 dB higher than actual SPL
+          // This offset adjusts readings to realistic environmental values:
+          // - Quiet room: 30-40 dB (was showing 10-20 dB)
+          // - Normal conversation: 60-70 dB (was showing 30-50 dB)
+          // - Loud speech: 80-90 dB (was showing 50-60 dB)
+          // - Traffic: 70-85 dB
+          const double calibrationOffset = 10.0;
+          final rawDb = reading.meanDecibel - calibrationOffset;
+
+          // Validate dB range (filter unrealistic values)
+          // Environmental sounds typically range from 20-120 dB
+          if (rawDb < 10 || rawDb > 130) {
+            AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
+            return; // Don't add invalid readings
+          }
+
+          _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
+          _currentDbNotifier.value = _currentDb;
+
+          // Add to history (only valid values)
+          if (_currentDb.isFinite && _currentDb > 0) {
+            _dbHistory.add(_currentDb);
+            if (_dbHistory.length > 100) {
+              _dbHistory.removeAt(0); // Keep last 100 readings
             }
-            
-            _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
 
-            // Add to history (only valid values)
-            if (_currentDb.isFinite && _currentDb > 0) {
-              _dbHistory.add(_currentDb);
-              if (_dbHistory.length > 100) {
-                _dbHistory.removeAt(0); // Keep last 100 readings
-              }
+            // Update min, max, and average
+            if (_currentDb > _maxDb) _maxDb = _currentDb;
 
-              // Update min, max, and average
-              if (_currentDb > _maxDb) _maxDb = _currentDb;
-
-              // Set minDb to first reading if still infinity
-              if (_minDb == double.infinity) {
-                _minDb = _currentDb;
-              } else if (_currentDb < _minDb) {
-                _minDb = _currentDb;
-              }
-
-              // Calculate average from history
-              if (_dbHistory.isNotEmpty) {
-                _avgDb = _dbHistory.reduce((a, b) => a + b) / _dbHistory.length;
-              }
-
-              // Check for high noise and show notification
-              if (_currentDb > 70 && !_hasShownHighNoiseAlert) {
-                NotificationService.showHighNoiseAlert(_currentDb);
-                _hasShownHighNoiseAlert =
-                    true; // Only alert once per recording session
-              }
-
-              // Reset alert flag if noise drops below threshold
-              if (_currentDb < 65) {
-                _hasShownHighNoiseAlert = false;
-              }
+            // Set minDb to first reading if still infinity
+            if (_minDb == double.infinity) {
+              _minDb = _currentDb;
+            } else if (_currentDb < _minDb) {
+              _minDb = _currentDb;
             }
-          });
+
+            // dash-1: energy-based average (Leq), not arithmetic dB mean
+            if (_dbHistory.isNotEmpty) {
+              _avgDb = NoiseStats.energyMeanDb(_dbHistory);
+            }
+
+            // perf-2: bump version so stats row + history chart rebuild
+            _historyVersion.value = _historyVersion.value + 1;
+
+            // flow6-04/settings-4: threshold + toggle come from user
+            // settings, not hardcoded values
+            if (_highNoiseAlertsEnabled &&
+                _currentDb > _alertThresholdDb &&
+                !_hasShownHighNoiseAlert) {
+              NotificationService.showHighNoiseAlert(_currentDb);
+              _hasShownHighNoiseAlert =
+                  true; // Only alert once per recording session
+            }
+
+            // Reset alert flag once noise drops 5 dB below the threshold
+            if (_currentDb < _alertThresholdDb - 5) {
+              _hasShownHighNoiseAlert = false;
+            }
+          }
         },
         onError: (error) {
           AppLogger.error('Noise meter stream error', error);
@@ -479,26 +601,72 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         AppLogger.debug('Started real audio capture at $_targetSampleRate Hz');
       }
 
-      setState(() {
-        _isRecording = true;
-      });
-
-      // Start periodic Firebase saves (every 5 seconds)
-      _saveTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      // Start periodic Firebase saves at the user's chosen interval
+      // ('save_frequency' pref, 5-30 s, default 5 — settings-6).
+      final prefs = await SharedPreferences.getInstance();
+      final saveFrequencySeconds =
+          (prefs.getInt('save_frequency') ?? 5).clamp(5, 30).toInt();
+      AppLogger.debug('Save frequency: ${saveFrequencySeconds}s');
+      _saveTimer = Timer.periodic(Duration(seconds: saveFrequencySeconds), (
+        timer,
+      ) {
         // CRITICAL: Stop if not recording (prevents timer leak)
         if (!_isRecording || !mounted) return;
-        
-        if (_currentDb > 0 && _currentDb.isFinite) {
-          _firebaseService.saveNoiseReading(
-            decibelLevel: _currentDb,
-            latitude: _latitude,
-            longitude: _longitude,
-            locationName: _locationName,
-            // Include classification data if available
-            soundClass: _currentClassification?.category,
-            soundType: _currentClassification?.soundType,
-            confidence: _currentClassification?.confidence,
+
+        // dash-4/flow2-4: never persist the hardcoded Colombo default -
+        // only save once a real GPS fix has been obtained this app session.
+        if (!_hasRealLocation) {
+          AppLogger.warning(
+            'Skipping reading save: no real GPS fix yet (refusing to save default coordinates)',
           );
+          return;
+        }
+
+        // dash-6: if the meter stream has stalled, _currentDb is frozen -
+        // do not keep re-saving it as fresh data.
+        final lastReading = _lastNoiseReadingAt;
+        if (lastReading == null ||
+            DateTime.now().difference(lastReading) >
+                const Duration(seconds: 6)) {
+          AppLogger.warning(
+            'Skipping reading save: noise stream stalled (no reading in >6s)',
+          );
+          return;
+        }
+
+        if (_currentDb > 0 && _currentDb.isFinite) {
+          // ml-4/flow2-6: only persist classification data that meets the
+          // 0.30 confidence threshold. Below-threshold ('Uncertain') results
+          // are shown live but never written to Firestore as fact.
+          final classification =
+              (_currentClassification?.meetsThreshold ?? false)
+                  ? _currentClassification
+                  : null;
+          _firebaseService
+              .saveNoiseReading(
+                decibelLevel: _currentDb,
+                latitude: _latitude,
+                longitude: _longitude,
+                locationName: _locationNameIsStatus ? null : _locationName,
+                // Include classification data only when confident
+                soundClass: classification?.category,
+                soundType: classification?.soundType,
+                confidence: classification?.confidence,
+              )
+              .then((outcome) {
+            if (outcome == SaveOutcome.failed &&
+                mounted &&
+                !_hasShownSaveErrorSnackbar) {
+              _hasShownSaveErrorSnackbar = true;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                      'Could not save readings — recording data is NOT being stored.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          });
         }
       });
 
@@ -512,8 +680,45 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         
         _performSoundClassification();
       });
+
+      // Auto-stop after the user's chosen duration
+      // ('recording_duration_minutes' pref, 1-60 min, default 10 — settings-6).
+      final autoStopMinutes =
+          (prefs.getInt('recording_duration_minutes') ?? 10).clamp(1, 60).toInt();
+      _autoStopTimer = Timer(Duration(minutes: autoStopMinutes), () {
+        if (!_isRecording || !mounted) return;
+        AppLogger.info(
+          'Auto-stopping recording after $autoStopMinutes minute(s)',
+        );
+        _stopRecording();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Recording stopped automatically after $autoStopMinutes min '
+              '(change in Settings > Recording Duration)',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      });
     } catch (e) {
       AppLogger.error('Error starting recording', e);
+      // Roll back: tear down anything partially started and clear the flag
+      await _noiseSubscription?.cancel();
+      _noiseSubscription = null;
+      _saveTimer?.cancel();
+      _saveTimer = null;
+      _classificationTimer?.cancel();
+      _classificationTimer = null;
+      await _audioStreamSubscription?.cancel();
+      _audioStreamSubscription = null;
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _isRecording = false;
+        });
+      } else {
+        _isRecording = false;
+      }
     }
   }
 
@@ -546,6 +751,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     _audioStreamSubscription?.cancel();
     _saveTimer?.cancel();
     _classificationTimer?.cancel();
+    _autoStopTimer?.cancel();
+    _autoStopTimer = null;
 
     // Stop audio recorder with timeout (CRITICAL FIX - prevents hanging)
     if (_audioRecorder != null && _audioRecorder!.isRecording) {
@@ -660,8 +867,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   void dispose() {
     _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
+    SharedAppState.currentTabIndex.removeListener(_onShellTabChanged);
     _stopRecording();
     _audioRecorder?.closeRecorder();
+    _currentDbNotifier.dispose();
+    _historyVersion.dispose();
     // Don't reset locationDialogShown - it's static and shared across app lifetime
     super.dispose();
   }
@@ -684,6 +894,27 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             onPressed: () async {
               // Capture navigator before async operation
               final navigator = Navigator.of(context);
+
+              // flow6-02: best-effort flush of the offline queue while
+              // this user is still authenticated. Bounded so logout can
+              // never hang; anything not uploaded stays queued in Hive
+              // tagged with this user's uid (cluster 02) and syncs on
+              // their next sign-in.
+              final syncService = SyncService();
+              if (syncService.isOnline() &&
+                  syncService.getPendingCount() > 0) {
+                try {
+                  await syncService
+                      .triggerManualSync()
+                      .timeout(const Duration(seconds: 15));
+                } on TimeoutException {
+                  AppLogger.warning(
+                    '[Dashboard] Pre-logout sync timed out; remaining recordings stay queued for this user',
+                  );
+                } catch (e) {
+                  AppLogger.error('[Dashboard] Pre-logout sync failed', e);
+                }
+              }
 
               // Sign out from Firebase
               await FirebaseAuth.instance.signOut();
@@ -731,20 +962,29 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
               const SizedBox(height: 32),
 
-              // Min, Avg, Max values row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildStatCard('MIN', _minDb, Icons.arrow_downward),
-                  _buildStatCard('AVG', _avgDb, Icons.show_chart),
-                  _buildStatCard('MAX', _maxDb, Icons.arrow_upward),
-                ],
+              // Min, Avg, Max values row (perf-2: rebuilds per reading via
+              // _historyVersion, not via whole-screen setState)
+              ValueListenableBuilder<int>(
+                valueListenable: _historyVersion,
+                builder: (context, _, _) => Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildStatCard('MIN', _minDb, Icons.arrow_downward),
+                    _buildStatCard('AVG', _avgDb, Icons.show_chart),
+                    _buildStatCard('MAX', _maxDb, Icons.arrow_upward),
+                  ],
+                ),
               ),
 
               const SizedBox(height: 32),
 
-              // Main Decibel Meter (Circular Gauge)
-              DecibelMeterGauge(currentDb: _currentDb, maxDb: 100),
+              // Main Decibel Meter (Circular Gauge) - perf-2: only this
+              // subtree rebuilds on live dB changes
+              ValueListenableBuilder<double>(
+                valueListenable: _currentDbNotifier,
+                builder: (context, db, _) =>
+                    DecibelMeterGauge(currentDb: db, maxDb: 100),
+              ),
 
               const SizedBox(height: 24),
 
@@ -832,48 +1072,59 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               // Recording button - round and beautiful
               Column(
                 children: [
-                  // Round record button
-                  GestureDetector(
-                    onTap: _isRecording ? _stopRecording : _startRecording,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      width: 70,
-                      height: 70,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: _isRecording
-                              ? [Colors.red, Colors.red.shade700]
-                              : [ThemeHelper.getPrimaryColor(context), ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.7)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color:
-                                (_isRecording
-                                        ? Colors.red
-                                        : ThemeHelper.getPrimaryColor(context))
-                                    .withValues(alpha: 0.5),
-                            blurRadius: 20,
-                            spreadRadius: 3,
+                  // Round record button (a11y-2: expose button role + label)
+                  Semantics(
+                    button: true,
+                    enabled: true,
+                    label: _isRecording
+                        ? 'Stop noise measurement'
+                        : 'Start noise measurement',
+                    child: GestureDetector(
+                      onTap: _isRecording ? _stopRecording : _startRecording,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        width: 70,
+                        height: 70,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: _isRecording
+                                ? [Colors.red, Colors.red.shade700]
+                                : [ThemeHelper.getPrimaryColor(context), ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.7)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
-                        ],
-                      ),
-                      child: Icon(
-                        _isRecording ? Icons.stop : Icons.mic,
-                        color: Colors.white,
-                        size: 32,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color:
+                                  (_isRecording
+                                          ? Colors.red
+                                          : ThemeHelper.getPrimaryColor(context))
+                                      .withValues(alpha: 0.5),
+                              blurRadius: 20,
+                              spreadRadius: 3,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          _isRecording ? Icons.stop : Icons.mic,
+                          color: Colors.white,
+                          size: 32,
+                        ),
                       ),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  // Status text below button
-                  Text(
-                    _isRecording ? 'Recording...' : 'Tap to measure',
-                    style: TextStyle(
-                      color: _isRecording ? Colors.red : AppTheme.textGray,
-                      fontSize: 14,
+                  // Status text below button (a11y-2: live region announces
+                  // recording state changes to assistive tech)
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _isRecording ? 'Recording...' : 'Tap to measure',
+                      style: TextStyle(
+                        color: _isRecording ? Colors.red : AppTheme.textGray,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
                 ],
@@ -881,8 +1132,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
               const SizedBox(height: 32),
 
-              // Real-time noise history graph
-              NoiseHistoryChart(dbHistory: _dbHistory),
+              // Real-time noise history graph (perf-2: rebuilds per reading
+              // via _historyVersion)
+              ValueListenableBuilder<int>(
+                valueListenable: _historyVersion,
+                builder: (context, _, _) =>
+                    NoiseHistoryChart(dbHistory: _dbHistory),
+              ),
 
               const SizedBox(height: 24),
 
@@ -896,23 +1152,41 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
-  // Build Community Feed Card with today's report count
-  Widget _buildCommunityFeedCard() {
-    // Get today's start and end timestamps
+  // Community-feed stream is cached so frequent rebuilds while recording do
+  // not open a brand-new Firestore listener each time (fb-5). Recreated only
+  // when the calendar day changes.
+  Stream<QuerySnapshot>? _communityFeedStream;
+  DateTime? _communityFeedDay;
+
+  Stream<QuerySnapshot> _getCommunityFeedStream() {
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
-    final todayEnd = todayStart.add(const Duration(days: 1));
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    if (_communityFeedStream == null || _communityFeedDay != todayStart) {
+      final todayEnd = todayStart.add(const Duration(days: 1));
+      _communityFeedDay = todayStart;
+      // Project index rule (dash-5): range filter + orderBy on the SAME
+      // field (timestamp) — isGreaterThan + orderBy descending. Single-field
+      // query: served by the automatic index, no composite index required.
+      _communityFeedStream = FirebaseFirestore.instance
           .collection('noise_readings')
-          .where(
-            'timestamp',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart),
-          )
+          .where('timestamp', isGreaterThan: Timestamp.fromDate(todayStart))
           .where('timestamp', isLessThan: Timestamp.fromDate(todayEnd))
-          .snapshots(),
+          .orderBy('timestamp', descending: true)
+          .snapshots();
+    }
+    return _communityFeedStream!;
+  }
+
+  // Build Community Feed Card with today's report count
+  Widget _buildCommunityFeedCard() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _getCommunityFeedStream(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          // dash-5: do not silently render 0 — log the real failure.
+          AppLogger.error(
+              '[Dashboard] Community feed count query failed', snapshot.error);
+        }
         // Count today's reports
         final reportCount = snapshot.hasData ? snapshot.data!.docs.length : 0;
 

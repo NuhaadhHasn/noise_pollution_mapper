@@ -97,48 +97,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       // Update email (this is more sensitive and requires re-authentication)
       if (emailChanged) {
+        // settings-9/flow6-06: verifyBeforeUpdateEmail only SENDS a
+        // verification link — the Auth email does not change until the
+        // user clicks it. Do NOT write the new email to Firestore here.
+        // ProfileSyncService.reconcileUserEmail() (run at app-shell
+        // startup) propagates it to users/{uid} and noise_readings once
+        // the Auth email has actually changed.
         await user.verifyBeforeUpdateEmail(newEmail);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'Verification email sent! Please check your new email address and verify it.',
+                'Verification email sent! Your profile will update automatically after you verify the new address and sign in again.',
               ),
               backgroundColor: Colors.blue,
               duration: Duration(seconds: 5),
             ),
           );
         }
-
-        // Update Firestore users collection with new email
-        await _firestore.collection('users').doc(user.uid).set({
-          'email': newEmail,
-          'updatedAt': FieldValue.serverTimestamp(),
-          'updatedAtClient': DateTime.now(), // Fallback timestamp
-        }, SetOptions(merge: true));
       }
 
       // Reload user to get updated info
       await user.reload();
-
-      // Update Firestore noise_readings with new user info
-      if (emailChanged || nameChanged) {
-        final snapshot = await _firestore
-            .collection('noise_readings')
-            .where('userId', isEqualTo: user.uid)
-            .get();
-
-        if (snapshot.docs.isNotEmpty) {
-          final batch = _firestore.batch();
-          for (var doc in snapshot.docs) {
-            batch.update(doc.reference, {
-              if (emailChanged) 'userEmail': newEmail,
-            });
-          }
-          await batch.commit();
-        }
-      }
 
       if (mounted) {
         setState(() => _isLoading = false);

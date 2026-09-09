@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../utils/theme_helper.dart';
 import 'login_screen.dart';
@@ -34,7 +35,10 @@ class OnboardingScreen extends StatelessWidget {
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {
+                      onPressed: () async {
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setBool('has_seen_onboarding', true);
+                        if (!context.mounted) return;
                         Navigator.of(context).pushReplacement(
                           MaterialPageRoute(builder: (context) => const LoginScreen()),
                         );

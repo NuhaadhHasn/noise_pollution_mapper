@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,8 +8,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../theme/app_theme.dart';
 import '../utils/animations.dart';
+import '../utils/csv_builder.dart';
 import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
+import '../utils/app_logger.dart';
 import 'report_noise_screen.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -77,14 +80,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
   // Load initial recordings
   Future<void> _loadInitialRecordings() async {
     if (_isLoading) return;
-    
+
     setState(() {
       _isLoading = true;
     });
 
     try {
       final userId = FirebaseAuth.instance.currentUser?.uid;
-      if (userId == null) return;
+      if (userId == null) return; // fb-3: finally still resets _isLoading
 
       // Get total count
       _totalCount = await _firebaseService.getUserReadingsCount(userId);
@@ -100,15 +103,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
           _recordings = snapshot.docs;
           _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
           _hasMore = snapshot.docs.length == _pageSize;
-          _isLoading = false;
           _isOffline = false;
         });
       }
     } catch (e) {
+      AppLogger.error('Failed to load history', e);
       if (mounted) {
         setState(() {
-          _isLoading = false;
           _isOffline = true;
+        });
+      }
+    } finally {
+      // fb-3: ALWAYS reset — every path, including the userId-null early
+      // return. Otherwise _isLoading is stuck true and every retry no-ops.
+      if (mounted && _isLoading) {
+        setState(() {
+          _isLoading = false;
         });
       }
     }
@@ -124,14 +134,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     try {
       final userId = FirebaseAuth.instance.currentUser?.uid;
-      if (userId == null) return;
+      if (userId == null) return; // fb-3: finally still resets _isLoading
 
-      if (_lastDocument == null) {
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
+      if (_lastDocument == null) return; // finally resets _isLoading
 
       final snapshot = await _firebaseService.getUserReadingsPaginated(
         userId: userId,
@@ -144,15 +149,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
           _recordings.addAll(snapshot.docs);
           _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
           _hasMore = snapshot.docs.length == _pageSize;
-          _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
+      // Don't show a user-facing error for load-more; log and stop loading.
+      AppLogger.error('Failed to load more history', e);
+    } finally {
+      if (mounted && _isLoading) {
         setState(() {
           _isLoading = false;
         });
-        // Don't show error for load more, just stop loading
       }
     }
   }
@@ -215,9 +221,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  // Export data to CSV
+  // Export data to CSV — current user's readings only (fb-4/uiux-3), fetched
+  // page-by-page through the composite index (userId ASC, timestamp DESC),
+  // CSV assembled on a background isolate (perf-5).
   Future<void> _exportDataToCSV(BuildContext context) async {
     try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please sign in to export your data')),
+        );
+        return;
+      }
+
       // Show loading
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -226,13 +242,49 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
       );
 
-      // Get all readings from Firebase
-      final snapshot = await FirebaseFirestore.instance
-          .collection('noise_readings')
-          .orderBy('timestamp', descending: true)
-          .get();
+      // Fetch ONLY this user's readings, page by page.
+      // userId isEqualTo + orderBy timestamp desc == the one composite index.
+      const int exportPageSize = 500;
+      final rows = <Map<String, Object?>>[];
+      DocumentSnapshot? cursor;
+      while (true) {
+        final snapshot = await _firebaseService.getUserReadingsPaginated(
+          userId: userId,
+          limit: exportPageSize,
+          startAfter: cursor,
+        );
 
-      if (snapshot.docs.isEmpty) {
+        for (final doc in snapshot.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+
+          // Readers handle both server timestamp and client createdAt.
+          final createdAtRaw = data['createdAt'];
+          final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ??
+              (createdAtRaw is Timestamp ? createdAtRaw.toDate() : null);
+
+          final confidence = data['confidence'];
+          rows.add({
+            'timestamp': timestamp != null
+                ? DateFormat('yyyy-MM-dd HH:mm:ss').format(timestamp)
+                : 'N/A',
+            'location': data['locationName'] as String? ?? 'Unknown',
+            'latitude': data['latitude'] ?? 0.0,
+            'longitude': data['longitude'] ?? 0.0,
+            'decibelLevel': data['decibelLevel'] ?? 0.0,
+            'soundClass': data['soundClass'] as String? ?? 'N/A',
+            'soundType': data['soundType'] as String? ?? 'N/A',
+            'confidence': confidence is num
+                ? (confidence * 100).toStringAsFixed(1)
+                : 'N/A',
+            'device': data['deviceInfo'] as String? ?? 'N/A',
+          });
+        }
+
+        if (snapshot.docs.length < exportPageSize) break;
+        cursor = snapshot.docs.last;
+      }
+
+      if (rows.isEmpty) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('No data to export')),
@@ -241,44 +293,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
         return;
       }
 
-      // Create CSV content
-      StringBuffer csvData = StringBuffer();
-
-      // CSV Header (includes sound classification fields)
-      csvData.writeln('Timestamp,Location,Latitude,Longitude,Decibel Level (dB),Sound Classification,Sound Type,Confidence (%),User Email,Device');
-
-      // Add data rows
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
-        final timestampStr = timestamp != null
-            ? DateFormat('yyyy-MM-dd HH:mm:ss').format(timestamp)
-            : 'N/A';
-
-        final location = data['locationName'] ?? 'Unknown';
-        final lat = data['latitude'] ?? 0.0;
-        final lng = data['longitude'] ?? 0.0;
-        final db = data['decibelLevel'] ?? 0.0;
-        final email = data['userEmail'] ?? 'N/A';
-        final device = data['deviceInfo'] ?? 'N/A';
-
-        // Sound classification data (may be null for older records)
-        final soundClass = data['soundClass'] ?? 'N/A';
-        final soundType = data['soundType'] ?? 'N/A';
-        final confidence = data['confidence'];
-        final confidenceStr = confidence != null
-            ? (confidence * 100).toStringAsFixed(1)
-            : 'N/A';
-
-        csvData.writeln('$timestampStr,"$location",$lat,$lng,$db,"$soundClass","$soundType",$confidenceStr,$email,$device');
-      }
+      // Build the CSV off the UI thread (perf-5)
+      final csv = await compute(buildNoiseCsv, rows);
 
       // Save to file
       final directory = await getApplicationDocumentsDirectory();
-      final fileName = 'noise_pollution_data_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.csv';
+      final fileName =
+          'noise_pollution_data_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.csv';
       final file = File('${directory.path}/$fileName');
 
-      await file.writeAsString(csvData.toString());
+      await file.writeAsString(csv);
 
       // Success message
       if (context.mounted) {
@@ -292,7 +316,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Exported ${snapshot.docs.length} recordings',
+                  'Exported ${rows.length} recordings',
                   style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context)),
                 ),
                 const SizedBox(height: 12),
@@ -401,29 +425,42 @@ class _HistoryScreenState extends State<HistoryScreen> {
               child: _isOffline
                   ? _buildOfflineUI()
                   : _recordings.isEmpty && !_isLoading
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                  ? LayoutBuilder(
+                      // flow3-5: the empty state must be scrollable, otherwise
+                      // RefreshIndicator can never fire pull-to-refresh.
+                      builder: (context, constraints) => ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
                         children: [
-                          Icon(
-                            Icons.history,
-                            size: 80,
-                            color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No recordings yet',
-                            style: TextStyle(
-                              color: ThemeHelper.getSecondaryTextColor(context),
-                              fontSize: 18,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Start recording to build your history',
-                            style: TextStyle(
-                              color: ThemeHelper.getSecondaryTextColor(context),
-                              fontSize: 14,
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                                minHeight: constraints.maxHeight),
+                            child: Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.history,
+                                    size: 80,
+                                    color: ThemeHelper.getSecondaryTextColor(context).withValues(alpha: 0.3),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No recordings yet',
+                                    style: TextStyle(
+                                      color: ThemeHelper.getSecondaryTextColor(context),
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Start recording to build your history',
+                                    style: TextStyle(
+                                      color: ThemeHelper.getSecondaryTextColor(context),
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ],
@@ -431,6 +468,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     )
                   : ListView.builder(
                       controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16),
                       itemCount: _recordings.length + (_hasMore ? 1 : 0),
                       itemBuilder: (context, index) {
@@ -448,7 +486,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                         final doc = _recordings[index];
                         final data = doc.data() as Map<String, dynamic>;
-                        final db = (data['decibelLevel'] as num).toDouble();
+                        // social-2/uiux-7: docs from older app versions or
+                        // manual reports may lack decibelLevel — never hard-cast.
+                        final db =
+                            ((data['decibelLevel'] as num?) ?? 0).toDouble();
                         final location = data['locationName'] as String? ?? 'Unknown';
                         final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
                         final soundClass = data['soundClass'] as String?;
@@ -704,7 +745,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   void _showDeleteConfirmation(BuildContext context, String docId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: ThemeHelper.getCardColor(context),
         title: Text('Delete Recording', style: TextStyle(color: ThemeHelper.getTextColor(context))),
         content: Text(
@@ -713,27 +754,86 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: Text('Cancel', style: TextStyle(color: ThemeHelper.getSecondaryTextColor(context))),
           ),
           TextButton(
-            onPressed: () async {
-              await FirebaseFirestore.instance.collection('noise_readings').doc(docId).delete();
-              if (context.mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Recording deleted'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
+            onPressed: () {
+              Navigator.pop(dialogContext); // close dialog first
+              _deleteRecording(docId); // then delete + update the list
             },
-            child: Text('Delete', style: TextStyle(color: Colors.red)),
+            child: Text('Delete', style: TextStyle(color: AppTheme.highNoise)),
           ),
         ],
       ),
     );
+  }
+
+  // social-3/uiux-2/flow3-3: delete with immediate local-list update,
+  // undo support, and an error path.
+  Future<void> _deleteRecording(String docId) async {
+    final index = _recordings.indexWhere((d) => d.id == docId);
+    if (index == -1) return;
+    final removedData = _recordings[index].data() as Map<String, dynamic>;
+
+    try {
+      await _firebaseService.deleteNoiseReading(docId);
+    } catch (e) {
+      AppLogger.error('Failed to delete recording $docId', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to delete recording. Please try again.'),
+            backgroundColor: AppTheme.highNoise,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _recordings.removeAt(index);
+      if (_totalCount > 0) _totalCount--;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Recording deleted'),
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => _undoDelete(docId, removedData, index),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _undoDelete(
+      String docId, Map<String, dynamic> data, int index) async {
+    try {
+      await _firebaseService.restoreNoiseReading(docId, data);
+      // Re-fetch so the local list holds a real DocumentSnapshot again.
+      final restored = await FirebaseFirestore.instance
+          .collection('noise_readings')
+          .doc(docId)
+          .get();
+      if (!mounted || !restored.exists) return;
+      setState(() {
+        _recordings.insert(index.clamp(0, _recordings.length), restored);
+        _totalCount++;
+      });
+    } catch (e) {
+      AppLogger.error('Failed to restore recording $docId', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not restore recording.'),
+            backgroundColor: AppTheme.highNoise,
+          ),
+        );
+      }
+    }
   }
 
 }

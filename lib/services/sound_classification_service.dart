@@ -25,13 +25,11 @@ class SoundClassificationService {
   static const int inputLength = 15600; // 0.975 seconds
   static const int numClasses = 521; // YAMNet outputs 521 classes
 
-  /// Confidence threshold for classification
-  /// Lowered to 15% for real-world environmental sound detection
-  /// Environmental sounds often have 10-25% confidence due to:
-  /// - Overlapping sounds (traffic + wind + birds)
-  /// - Phone microphone quality limitations
-  /// - Non-stationary nature of environmental sounds
-  static const double confidenceThreshold = 0.15;
+  /// Confidence threshold for classification (project spec: 0.30).
+  /// Results below this are returned with category 'Uncertain' for live
+  /// display only and must NEVER be persisted to Firestore as fact
+  /// (see the save-timer gating in dashboard_screen.dart).
+  static const double confidenceThreshold = 0.30;
 
   /// Classification frequency - every 5 seconds (matches Firebase save frequency)
   static const int classificationIntervalSeconds = 5;
@@ -52,6 +50,17 @@ class SoundClassificationService {
 
     try {
       AppLogger.debug('Initializing Sound Classification Service...');
+
+      // Load the official index->name class map first (finding ml-1).
+      // Without it every label would be wrong, so failure aborts init;
+      // the app then runs with dB measurement but no classification.
+      final classMapLoaded = await YAMNetClassMapping.loadOfficialClassMap();
+      if (!classMapLoaded) {
+        AppLogger.error('Official YAMNet class map failed to load - '
+            'sound classification disabled');
+        _isInitialized = false;
+        return false;
+      }
 
       _interpreter = await Interpreter.fromAsset('assets/models/yamnet.tflite');
       AppLogger.debug('Model input shape: ${_interpreter!.getInputTensor(0).shape}');
@@ -112,8 +121,9 @@ class SoundClassificationService {
       final maxIndex = _getMaxIndex(scores);
       final confidence = scores[maxIndex];
 
-      // Get actual YAMNet class name from mapping (CRITICAL FIX)
-      final yamnetClassName = YAMNetClassMapping.indexToClassName[maxIndex] ?? 'Unknown_Class_$maxIndex';
+      // Get the official YAMNet class name; the placeholder prefix must be
+      // 'YAMNet_Class_' so getCategoryFromClassName can parse the index (ml-2)
+      final yamnetClassName = YAMNetClassMapping.indexToClassName[maxIndex] ?? 'YAMNet_Class_$maxIndex';
       
       // DEBUG: Log top 3 predictions for debugging
       final sortedIndices = List<int>.generate(scores.length, (i) => i);
@@ -122,15 +132,15 @@ class SoundClassificationService {
           '#${sortedIndices[1]} (${(scores[sortedIndices[1]] * 100).toStringAsFixed(1)}%), '
           '#${sortedIndices[2]} (${(scores[sortedIndices[2]] * 100).toStringAsFixed(1)}%)');
 
-      // Step 6: Check confidence threshold
+      // Step 6: Check confidence threshold (0.30, project spec).
+      // Below-threshold predictions come back as 'Uncertain' so the UI can
+      // show live feedback, but meetsThreshold is false and the dashboard
+      // save timer excludes them from Firestore (ml-4/flow2-6).
       if (confidence < confidenceThreshold) {
-        AppLogger.debug('Low confidence: ${(confidence * 100).toStringAsFixed(1)}% for $yamnetClassName (threshold: ${(confidenceThreshold * 100).toStringAsFixed(0)}%)');
-        // Map to category even for low confidence
-        final lowConfCategory = YAMNetClassMapping.getCategoryFromClassName(yamnetClassName);
-        final lowConfSoundType = YAMNetClassMapping.getSoundType(lowConfCategory);
+        AppLogger.debug('Low confidence: ${(confidence * 100).toStringAsFixed(1)}% for $yamnetClassName (threshold: ${(confidenceThreshold * 100).toStringAsFixed(0)}%) -> Uncertain');
         return ClassificationResult(
-          category: lowConfCategory,
-          soundType: lowConfSoundType,
+          category: YAMNetClassMapping.categoryUncertain,
+          soundType: YAMNetClassMapping.typeAmbient,
           confidence: confidence,
           yamnetClass: yamnetClassName,
           yamnetClassIndex: maxIndex,

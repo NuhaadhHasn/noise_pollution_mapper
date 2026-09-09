@@ -99,7 +99,9 @@ void main() {
 // Helper validation functions
 bool _isValidEmail(String email) {
   if (email.isEmpty) return false;
-  final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+  // '+' is permitted in the local part (RFC 5322) and the app's own email
+  // fields accept it, so the pattern must not reject 'test+tag@gmail.com'.
+  final emailRegex = RegExp(r'^[\w.+-]+@([\w-]+\.)+[\w-]{2,4}$');
   return emailRegex.hasMatch(email);
 }
 

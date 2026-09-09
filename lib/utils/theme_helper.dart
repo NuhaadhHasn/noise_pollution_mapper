@@ -53,4 +53,9 @@ class ThemeHelper {
   static Color getButtonTextColor(BuildContext context) {
     return Colors.white; // Always white on colored buttons for contrast
   }
+
+  // Get error color
+  static Color getErrorColor(BuildContext context) {
+    return Theme.of(context).colorScheme.error;
+  }
 }

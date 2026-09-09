@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_logger.dart';
+import '../utils/payment_url_utils.dart';
 import '../utils/theme_helper.dart';
 import '../services/donation_service.dart';
 
@@ -22,7 +23,7 @@ class PayPalWebViewWidget extends StatefulWidget {
 }
 
 class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
-  late final InAppWebViewController _controller;
+  InAppWebViewController? _controller;
   bool _isLoading = true;
   bool _hasError = false;
   String _errorMessage = '';
@@ -37,10 +38,14 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
     final paypalEmail = DonationService.clientId;
     final isSandbox = DonationService.isSandboxMode;
     
-    // Generate PayPal donation URL
-    final paypalUrl = isSandbox
-        ? 'https://www.sandbox.paypal.com/cgi-bin/webscr?cmd=_donations&business=$paypalEmail&item_name=Donation+to+Noise+Pollution+Mapper&amount=${widget.amount.toStringAsFixed(2)}&currency_code=${widget.currency}'
-        : 'https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=$paypalEmail&item_name=Donation+to+Noise+Pollution+Mapper&amount=${widget.amount.toStringAsFixed(2)}&currency_code=${widget.currency}';
+    // Generate PayPal donation URL with return/cancel_return markers so
+    // completion and cancellation are observable (donate-1 / flow7-01).
+    final paypalUrl = PaymentUrlUtils.buildPayPalDonationUrl(
+      business: paypalEmail,
+      amount: widget.amount,
+      currency: widget.currency,
+      sandbox: isSandbox,
+    );
 
     AppLogger.info('Opening PayPal: $paypalUrl');
 
@@ -60,7 +65,11 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
-              _controller.reload();
+              if (_controller == null) {
+                AppLogger.warning('Reload tapped before WebView was created');
+                return;
+              }
+              _controller?.reload();
               setState(() {
                 _isLoading = true;
                 _hasError = false;
@@ -79,6 +88,7 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
             child: InAppWebView(
               initialUrlRequest: URLRequest(url: WebUri(paypalUrl)),
               initialSettings: InAppWebViewSettings(
+                useShouldOverrideUrlLoading: true,
                 javaScriptEnabled: true,
                 domStorageEnabled: true,
                 useHybridComposition: true,
@@ -110,46 +120,59 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
                 });
                 final urlString = url?.toString() ?? '';
                 AppLogger.debug('PayPal loaded: $urlString');
-                
+
                 // Check if PayPal page loaded successfully
-                if (urlString.contains('genericError') || 
+                if (urlString.contains('genericError') ||
                     urlString.contains('error')) {
                   AppLogger.warning('PayPal showed error page');
-                }
-                
-                // Check for payment success
-                if (urlString.contains('payment=success') || 
-                    urlString.contains('payment=completed')) {
-                  _paymentComplete = true;
-                  _onPaymentSuccess();
-                } else if (urlString.contains('payment=cancel') || 
-                           urlString.contains('payment=cancelled')) {
-                  _onPaymentCancelled();
                 }
               },
               onReceivedError: (controller, request, error) {
                 final requestUrl = request.url.toString();
-                AppLogger.error('PayPal error: ${error.description} (URL: $requestUrl)');
-                // Don't show error for PayPal domain errors (they're expected)
-                if (!requestUrl.contains('paypal.com')) {
-                  setState(() {
-                    _hasError = true;
-                    _errorMessage = error.description;
-                  });
+                AppLogger.error(
+                    'PayPal error: ${error.description} '
+                    '(URL: $requestUrl, mainFrame: ${request.isForMainFrame})');
+                // Subresource failures (images, scripts, analytics, CDN
+                // assets) must not replace a working checkout with a
+                // full-screen error (donate-3). Only main-frame failures
+                // mean the checkout itself is broken.
+                if (request.isForMainFrame != true) {
+                  return;
                 }
+                setState(() {
+                  _hasError = true;
+                  _errorMessage = error.description;
+                });
               },
               shouldOverrideUrlLoading: (controller, navigationAction) async {
-                final url = navigationAction.request.url?.toString() ?? '';
-                
-                // Allow PayPal domain navigation
-                if (url.contains('paypal.com') ||
-                    url.contains('paypalobjects.com') ||
-                    url.contains('braintreegateway.com')) {
+                final uri = navigationAction.request.url;
+
+                // Intercept our return/cancel markers before anything else.
+                // The marker pages are never loaded — navigation is cancelled.
+                final returnStatus = PaymentUrlUtils.classifyPaymentReturn(uri);
+                if (returnStatus == PaymentReturnStatus.success) {
+                  if (!_paymentComplete) {
+                    setState(() {
+                      _paymentComplete = true;
+                    });
+                    _onPaymentSuccess();
+                  }
+                  return NavigationActionPolicy.CANCEL;
+                }
+                if (returnStatus == PaymentReturnStatus.cancelled) {
+                  _onPaymentCancelled();
+                  return NavigationActionPolicy.CANCEL;
+                }
+
+                // Allow PayPal domain navigation (exact host or subdomain
+                // only — substring matching was bypassable, donate-2).
+                if (PaymentUrlUtils.isAllowedPaymentHost(uri)) {
                   return NavigationActionPolicy.ALLOW;
                 }
-                
+
                 // Block external navigation
-                AppLogger.warning('Blocked navigation to: $url');
+                AppLogger.warning(
+                    'Blocked navigation to: ${uri?.toString() ?? '(null)'}');
                 return NavigationActionPolicy.CANCEL;
               },
               onConsoleMessage: (controller, consoleMessage) {
@@ -252,7 +275,12 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
                       const SizedBox(height: 24),
                       ElevatedButton.icon(
                         onPressed: () {
-                          _controller.reload();
+                          if (_controller == null) {
+                            AppLogger.warning(
+                                'Try Again tapped before WebView was created');
+                            return;
+                          }
+                          _controller?.reload();
                           setState(() {
                             _isLoading = true;
                             _hasError = false;

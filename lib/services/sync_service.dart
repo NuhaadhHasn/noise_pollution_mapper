@@ -22,6 +22,7 @@ class SyncService {
   bool _isOnline = false;
   bool _isSyncing = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<User?>? _authSubscription;
 
   // Sync configuration
   static const int maxSyncAttempts = 3;
@@ -62,6 +63,21 @@ class SyncService {
 
       _isInitialized = true;
       AppLogger.info('[SyncService] Initialized successfully');
+
+      // offline-3: a fresh launch that is already online never fires an
+      // offline→online transition, and neither does signing in. Listen to
+      // auth state (fires immediately with the current user, including the
+      // restored session at startup) and sync when a user is present.
+      _authSubscription = _auth.authStateChanges().listen(_onAuthStateChanged);
+
+      // Belt-and-braces startup check for the case where auth restore has
+      // already completed before this listener attaches.
+      if (_isOnline && _storage.getPendingCount() > 0) {
+        AppLogger.info(
+          '[SyncService] Startup: pending recordings found while online. Starting sync...',
+        );
+        unawaited(syncOfflineRecordings());
+      }
       return true;
     } catch (e) {
       AppLogger.error('[SyncService] Initialization failed', e);
@@ -82,16 +98,63 @@ class SyncService {
       // If we just came online and have pending recordings, trigger sync
       if (!wasOnline && _isOnline) {
         AppLogger.info('[SyncService] Back online! Checking for pending syncs...');
-        final pendingCount = _storage.getPendingCount();
-        if (pendingCount > 0) {
-          AppLogger.info('[SyncService] Found $pendingCount pending recordings. Starting sync...');
-          syncOfflineRecordings();
-        }
+        _handleBackOnline();
       }
     } catch (e) {
       AppLogger.error('[SyncService] Error handling connectivity change', e);
       // Assume offline on error
       _isOnline = false;
+    }
+  }
+
+  /// On connectivity restoration, give previously max-attempts-failed
+  /// recordings another chance (offline-2/flow2-7), then sync anything
+  /// pending. New connection == new circumstances, so the old failures
+  /// are no longer meaningful.
+  Future<void> _handleBackOnline() async {
+    await _storage.resetFailedSyncAttempts(maxSyncAttempts);
+    final pendingCount = _storage.getPendingCount();
+    if (pendingCount > 0) {
+      AppLogger.info(
+        '[SyncService] Found $pendingCount pending recordings. Starting sync...',
+      );
+      await syncOfflineRecordings();
+    }
+  }
+
+  /// Sync pending recordings when a user signs in (offline-3). The stream
+  /// also fires once on listen with the restored session, covering startup.
+  ///
+  /// On sign-out (flow6-02) nothing is uploaded and nothing is destroyed:
+  /// pending entries stay in Hive tagged with their owner's userId
+  /// (cluster 02), and the mid-sync guard in syncOfflineRecordings stops
+  /// any in-flight sync from writing without an authenticated session.
+  void _onAuthStateChanged(User? user) {
+    if (user == null) {
+      final pending = _storage.getPendingCount();
+      if (pending > 0) {
+        AppLogger.info(
+          '[SyncService] User signed out with $pending pending recordings. '
+          'They remain queued for their owner and sync on next sign-in.',
+        );
+      }
+      return;
+    }
+    if (_isOnline && _storage.getPendingCount() > 0) {
+      AppLogger.info(
+        '[SyncService] User ${user.uid} signed in with pending recordings. Starting sync...',
+      );
+      unawaited(syncOfflineRecordings());
+    }
+  }
+
+  /// Called by FirebaseService after a recording was queued although the
+  /// device believes it is online (fallback save after a failed direct
+  /// write, offline-3). Kicks a sync instead of waiting for the next
+  /// offline→online transition.
+  void notifyQueued() {
+    if (_isInitialized && _isOnline && !_isSyncing) {
+      unawaited(syncOfflineRecordings());
     }
   }
 
@@ -147,6 +210,16 @@ class SyncService {
       }
 
       for (final recording in queuedRecordings) {
+        // flow6-02: abort mid-sync if the session ended (logout) or the
+        // user changed since this sync started — never write with a
+        // stale identity. Remaining recordings stay queued.
+        if (_auth.currentUser?.uid != user.uid) {
+          AppLogger.warning(
+            '[SyncService] Auth state changed mid-sync. Aborting; remaining recordings stay queued.',
+          );
+          break;
+        }
+
         // Check if max attempts exceeded
         if (recording.syncAttempts >= maxSyncAttempts) {
           AppLogger.warning(
@@ -155,17 +228,39 @@ class SyncService {
           continue;
         }
 
+        // Never upload another user's queued recording
+        // (offline-6/flow2-2/flow5-2). Foreign entries stay queued until
+        // their owner signs in; entries with no resolvable owner are
+        // skipped so they are never mis-attributed.
+        final ownerId = recording.userId;
+        if (ownerId == null || ownerId != user.uid) {
+          AppLogger.warning(
+            '[SyncService] Skipping ${recording.id}: queued by '
+            '${ownerId ?? "unknown user"}, current user is ${user.uid}. '
+            'Leaving in queue for its owner.',
+          );
+          continue;
+        }
+
         try {
           AppLogger.debug('[SyncService] Syncing recording: ${recording.id}');
 
-          // Save to Firebase
-          await _saveToFirebase(recording, user.uid);
+          // Save to Firebase under the recording owner's uid
+          await _saveToFirebase(recording, ownerId);
 
-          // Mark as synced in local storage
-          await _storage.markAsSynced(recording.id);
-          syncedCount++;
-
-          AppLogger.info('[SyncService] Successfully synced: ${recording.id}');
+          // Mark as synced in local storage. Only count it if the local
+          // mark succeeded; otherwise it stays queued and the retry is
+          // harmless because the upload is idempotent (same doc ID).
+          final marked = await _storage.markAsSynced(recording.id);
+          if (marked) {
+            syncedCount++;
+            AppLogger.info('[SyncService] Successfully synced: ${recording.id}');
+          } else {
+            AppLogger.warning(
+              '[SyncService] Uploaded ${recording.id} but failed to mark it '
+              'synced locally; it will be retried idempotently',
+            );
+          }
         } catch (e) {
           // Update sync attempts
           final newAttempts = recording.syncAttempts + 1;
@@ -210,11 +305,18 @@ class SyncService {
   Future<void> _saveToFirebase(OfflineRecording recording, String userId) async {
     final data = <String, dynamic>{
       'userId': userId,
+      'userEmail': recording.userEmail ?? _auth.currentUser?.email,
       'decibelLevel': recording.decibelLevel,
       'latitude': recording.latitude,
       'longitude': recording.longitude,
       'locationName': recording.locationName ?? 'Unknown Location',
-      'timestamp': FieldValue.serverTimestamp(),
+      // fb-2/flow2-3: the true capture time, NOT the sync time. This is a
+      // deliberate, documented deviation from the serverTimestamp
+      // convention: serverTimestamp() here would stamp the moment of sync,
+      // putting offline readings on the wrong day in analytics/history/
+      // heatmap. createdAt keeps the client DateTime per the dual-write
+      // convention, so readers that handle both fields stay correct.
+      'timestamp': Timestamp.fromDate(recording.timestamp),
       'createdAt': recording.timestamp,
       'deviceInfo': 'Mobile Device',
     };
@@ -230,15 +332,21 @@ class SyncService {
       data['confidence'] = recording.confidence;
     }
 
-    await _firestore.collection('noise_readings').add(data);
+    // Deterministic document ID (offline-4/flow5-3): recording.id is unique
+    // per reading, so a retry after a lost ack overwrites the same document
+    // instead of creating a duplicate.
+    await _firestore.collection('noise_readings').doc(recording.id).set(data);
   }
 
-  /// Manually trigger sync (user-initiated)
+  /// Manually trigger sync (user-initiated). Explicit user intent resets
+  /// the attempt counter on dead-lettered recordings so "Sync Now" always
+  /// retries everything (offline-2/flow2-7).
   Future<int> triggerManualSync() async {
     if (!_isOnline) {
       AppLogger.warning('[SyncService] Cannot manually sync while offline');
       return 0;
     }
+    await _storage.resetFailedSyncAttempts(maxSyncAttempts);
     return await syncOfflineRecordings();
   }
 
@@ -249,6 +357,7 @@ class SyncService {
         'isOnline': _isOnline,
         'isSyncing': _isSyncing,
         'pendingCount': getPendingCount(),
+        'failedCount': _storage.getFailedCount(maxSyncAttempts),
         'lastSyncTime': _storage.getLastSyncTimeSync(), // Use sync version
       };
     } catch (e) {
@@ -257,6 +366,7 @@ class SyncService {
         'isOnline': false,
         'isSyncing': false,
         'pendingCount': 0,
+        'failedCount': 0,
         'lastSyncTime': null,
       };
     }
@@ -284,6 +394,7 @@ class SyncService {
   /// Dispose resources
   void dispose() {
     _connectivitySubscription?.cancel();
+    _authSubscription?.cancel();
     _storage.close();
     _isInitialized = false;
     AppLogger.info('[SyncService] Disposed');

@@ -1,0 +1,103 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:noise_pollution_mapper/services/yamnet_class_mapping.dart';
+
+// Verifies the bundled official YAMNet class map (finding ml-1).
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('Official YAMNet class map', () {
+    setUpAll(() async {
+      final loaded = await YAMNetClassMapping.loadOfficialClassMap();
+      expect(loaded, isTrue, reason: 'yamnet_class_map.csv must parse');
+    });
+
+    test('loads all 521 classes', () {
+      expect(YAMNetClassMapping.indexToClassName.length, equals(521));
+      expect(YAMNetClassMapping.isClassMapLoaded, isTrue);
+    });
+
+    test('official map is bijective (521 unique names)', () {
+      expect(
+        YAMNetClassMapping.indexToClassName.values.toSet().length,
+        equals(521),
+      );
+    });
+
+    test('spot-check official names against tensorflow/models', () {
+      final map = YAMNetClassMapping.indexToClassName;
+      expect(map[0], equals('Speech'));
+      // Quoted-name parsing (display name contains a comma):
+      expect(map[1], equals('Child speech, kid speaking'));
+      expect(map[132], equals('Music'));
+      expect(map[294], equals('Vehicle'));
+      expect(map[388], equals('Busy signal'));
+      expect(map[390], equals('Siren'));
+      expect(map[414], equals('Jackhammer'));
+      expect(map[494], equals('Silence'));
+      expect(map[520], equals('Field recording'));
+    });
+
+    test('fabricated names from the old hand map are gone', () {
+      final names = YAMNetClassMapping.indexToClassName.values.toSet();
+      // These names never existed in the AudioSet ontology (finding ml-1):
+      expect(names.contains('Talk show'), isFalse);
+      expect(names.contains('Room tone'), isFalse);
+      expect(names.contains('Water polo'), isFalse);
+      expect(names.contains('Cubicle'), isFalse);
+      expect(names.contains('Forest ambience'), isFalse);
+    });
+  });
+
+  group('classMapping audit against official names (ml-1)', () {
+    setUpAll(() async {
+      await YAMNetClassMapping.loadOfficialClassMap();
+    });
+
+    // Generic non-official keys intentionally kept because the
+    // partial-match fallback in getCategoryFromClassName uses them as
+    // substring helpers for real names. Do not grow this list.
+    const allowedHelperKeys = {
+      'Revving', 'Accelerating', 'Brake', 'Scooter', 'Small engine',
+      'Hammering', 'Machine', 'Machinery', 'Industrial noise', 'Motor',
+      'Male speech, man speaking', 'Female speech, woman speaking',
+      'Battle cry', 'String instrument', 'Tuba', 'Cowbell (instrument)',
+      'Music genre', 'Country music', 'Prayer',
+      'Domestic sounds, home sounds', 'Mechanical pencil', 'Clock alarm',
+      'Auto rickshaw', 'Go-kart', 'Hiss (cat)', 'Lightning', 'Breeze',
+      'Gust', 'Roaring', 'Environmental sounds', 'Bay', 'Pop', 'Thump',
+    };
+
+    test('no fabricated class names remain in classMapping', () {
+      final official = YAMNetClassMapping.indexToClassName.values.toSet();
+      final nonOfficial = YAMNetClassMapping.classMapping.keys
+          .where((k) => !official.contains(k))
+          .toSet();
+      expect(
+        nonOfficial.difference(allowedHelperKeys),
+        isEmpty,
+        reason: 'classMapping contains non-official class names',
+      );
+    });
+
+    test('high-impact official names resolve to the right category', () {
+      expect(YAMNetClassMapping.getCategoryFromClassName('Siren'),
+          equals('Traffic'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Alarm'),
+          equals('Alarm'));
+      expect(
+          YAMNetClassMapping.getCategoryFromClassName('Boat, Water vehicle'),
+          equals('Transport'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Rain'),
+          equals('Weather'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Explosion'),
+          equals('Construction'));
+      expect(
+          YAMNetClassMapping.getCategoryFromClassName('Inside, small room'),
+          equals('Other'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Silence'),
+          equals('Other'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Basketball bounce'),
+          equals('Sports'));
+    });
+  });
+}

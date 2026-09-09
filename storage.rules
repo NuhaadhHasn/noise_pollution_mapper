@@ -1,0 +1,93 @@
+rules_version = '2';
+
+// =============================================================================
+// AUTHORITATIVE MERGED STORAGE RULESET — project noise-pollution-mapper-9ad3d
+// -----------------------------------------------------------------------------
+// Single source of truth for BOTH clients:
+//   * APP       C:/Users/nuhaa/Downloads/Chatgpt/noise_pollution_mapper
+//               (wires this file via firebase.json "storage": {"rules": ...})
+//   * DASHBOARD C:/Users/nuhaa/Downloads/Chatgpt/noise-pollution-mapper-dashboard
+//               (its Storage rules live in the misleadingly named
+//                `firebase.rules` — despite the name that file is STORAGE
+//                rules, not Firestore rules)
+// Keep the copy in the OTHER repo BYTE IDENTICAL to this file, or DELETE it.
+// Deploying the app's old deny-all clobbered the dashboard's /cache read grant;
+// deploying the dashboard's file re-opened nothing the app needs. This file
+// ends that race (sec-1).
+//
+// TWO-ADMIN-DEFINITIONS RESOLUTION (Storage half):
+// The dashboard's Storage rules defined admin as
+//   request.auth.token.email matches '.*@admin\\.com$'
+// while its Firestore rules defined admin as users/{uid}.role == 'admin'.
+// Storage rules CANNOT read Firestore — there is no get() across services —
+// which is presumably why the email match exists at all. It is NOT retained,
+// because no admin-gated Storage write exists to protect (see /cache below),
+// and an unused helper would only invite reuse. Were it ever needed, it would
+// be inadequate: it trusts a self-service signup attribute, @admin.com is a
+// domain this project does not own (the dashboard's own LoginPage.tsx:259
+// advertises admin@noisemapper.lk, which the pattern does not even match), and
+// it does not require email_verified — so anyone able to register an address at
+// any @admin.com mail host could self-grant. Admin writes here belong to the
+// Admin SDK, which bypasses rules entirely; admin identity for FIRESTORE stays
+// the role-document check in firestore.rules.
+// =============================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // -------------------------------------------------------------------------
+    // /cache/{fileName} — the master noise-readings cache JSON
+    // -------------------------------------------------------------------------
+    // READ: preserved from the dashboard's ruleset, scoped to signed-in users.
+    // Exposure is bounded: the file is a dump of noise_readings, which
+    // firestore.rules already exposes to every signed-in user, so this grants
+    // nothing new (and the app stores only masked author labels there — sec-2).
+    //
+    // LOAD-BEARING? NO — verified in the dashboard repo, and this matters:
+    //   * The only browser consumer is src/utils/cacheDownloader.ts, reached
+    //     only from src/components/map/CacheStatus.tsx — and CacheStatus is
+    //     imported by NOTHING (grep across src finds no mount point). It is
+    //     dead code today.
+    //   * Even when mounted it would not be served by this rule: it does a
+    //     plain fetch() of
+    //     firebasestorage.googleapis.com/.../cache%2F...json?alt=media with no
+    //     ID token and no download token, so request.auth is null. Its
+    //     download works in production only because the Cloud Function calls
+    //     file.makePublic() (functions/src/cache-export.ts), i.e. a public GCS
+    //     object ACL — outside these rules.
+    //   * Every WRITER is Admin SDK / owner credentials and bypasses rules:
+    //     exportCacheDaily/exportCacheWeekly (functions/src/cache-export.ts)
+    //     and scripts/upload-cache.sh (firebase CLI upload).
+    //   * The APP touches Storage not at all: firebase_storage is in
+    //     pubspec.yaml (line 34) but has ZERO call sites in lib/ (verified by
+    //     grep for FirebaseStorage/getDownloadURL/putFile/putData).
+    // The grant is kept because it is the documented contract for the
+    // dashboard's cache download and costs nothing extra; it is NOT what makes
+    // that download work today. If the dashboard ever mounts CacheStatus, fix
+    // it to fetch with an auth token (or getDownloadURL) and drop the public
+    // ACL, at which point this rule becomes the real gate.
+    //
+    // WRITE: denied. Both writers are Admin SDK / CLI and bypass rules, so no
+    // client needs it — and denying it removes the only reason to define an
+    // admin helper in this service (constraint: nothing beyond what is needed).
+    match /cache/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Everything else stays denied. No profile photos, no audio uploads: the
+    // app has no Storage call sites and the dashboard browser performs no
+    // uploads (no uploadBytes/uploadString/deleteObject anywhere in its src/).
+    // Open a narrowly scoped path (e.g. /profile_photos/{uid}) only when a
+    // feature actually needs it.
+    // -------------------------------------------------------------------------
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

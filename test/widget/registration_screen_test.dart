@@ -15,8 +15,10 @@ void main() {
       // Verify we have 4 text fields (name, email, password, confirm password)
       expect(find.byType(TextFormField), findsNWidgets(4));
 
-      // Verify create account button exists
-      expect(find.text('Create Account'), findsOneWidget);
+      // 'Create Account' is BOTH the screen heading (registration_screen.dart
+      // :177) and the submit button label (:421), so two widgets is correct
+      // here — asserting one was the test's bug, not the screen's.
+      expect(find.text('Create Account'), findsNWidgets(2));
     });
 
     testWidgets('Name field accepts input', (tester) async {
@@ -54,10 +56,11 @@ void main() {
         ),
       );
 
-      final createButton = find.text('Create Account');
-      expect(createButton, findsOneWidget);
+      // Two matches (heading, then button); the button is last in tree order.
+      final createLabels = find.text('Create Account');
+      expect(createLabels, findsNWidgets(2));
 
-      await tester.tap(createButton);
+      await tester.tap(createLabels.last);
       await tester.pump();
     });
 
@@ -68,7 +71,8 @@ void main() {
         ),
       );
 
-      expect(find.textContaining('Login'), findsWidgets);
+      // The link reads 'Log In' (registration_screen.dart:445).
+      expect(find.textContaining('Log In'), findsWidgets);
     });
   });
 }

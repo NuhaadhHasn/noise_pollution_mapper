@@ -1,3 +1,5 @@
+> OUTDATED: .env/flutter_dotenv were removed for security (audit critic-02). See docs/SECURITY_ROTATION.md.
+
 # 🚀 PRODUCTION READINESS CHECKLIST
 
 **Last Updated:** 2026-02-05 (Session 21)

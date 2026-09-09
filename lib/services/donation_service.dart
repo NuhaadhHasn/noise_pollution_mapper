@@ -1,19 +1,69 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/app_logger.dart';
 
 /// Service class for handling donation-related operations
 class DonationService {
-  // PayPal configuration from environment variables
-  static String get clientId => dotenv.env['PAYPAL_CLIENT_ID'] ?? '';
-  static String get secret => dotenv.env['PAYPAL_SECRET'] ?? '';
-  static bool get isSandboxMode => 
-    (dotenv.env['PAYPAL_SANDBOX_MODE'] ?? 'true').toLowerCase() == 'true';
+  /// Donation display config served from Firestore doc `app_config/donations`.
+  /// Contains ONLY public values (a PayPal business email used in a public
+  /// donation URL, a sandbox flag, and a Buy Me a Coffee URL). Merchant
+  /// secrets must never be stored on-device (audit finding critic-02).
+  static Map<String, dynamic>? _remoteConfig;
+
+  /// Fetches the donation config once per app session. Safe to call
+  /// repeatedly; failures leave the safe defaults in place.
+  static Future<void> ensureConfigLoaded() async {
+    if (_remoteConfig != null) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('app_config')
+          .doc('donations')
+          .get();
+      final data = doc.data();
+      if (doc.exists && data != null) {
+        applyRemoteConfig(data);
+      } else {
+        AppLogger.warning(
+          '[DonationService] app_config/donations document is missing',
+        );
+      }
+    } catch (e, stackTrace) {
+      AppLogger.error(
+        '[DonationService] Failed to load donation config',
+        e,
+        stackTrace,
+      );
+    }
+  }
+
+  /// Applies a config map directly (also used by unit tests).
+  @visibleForTesting
+  static void applyRemoteConfig(Map<String, dynamic> data) {
+    _remoteConfig = data;
+  }
+
+  @visibleForTesting
+  static void resetConfigForTest() {
+    _remoteConfig = null;
+  }
+
+  /// PayPal business email used to build the public donation URL.
+  static String get clientId {
+    final v = _remoteConfig?['paypalBusinessEmail'];
+    return v is String ? v : '';
+  }
+
+  static bool get isSandboxMode {
+    final v = _remoteConfig?['paypalSandboxMode'];
+    return v is bool ? v : true;
+  }
 
   // Buy Me a Coffee URL
-  static String get buyMeACoffeeUrl => 
-    dotenv.env['BUY_ME_A_COFFEE_URL'] ?? '';
+  static String get buyMeACoffeeUrl {
+    final v = _remoteConfig?['buyMeACoffeeUrl'];
+    return v is String ? v : '';
+  }
 
   // Preset donation amounts
   static const List<double> presetAmounts = [5.0, 10.0, 20.0];

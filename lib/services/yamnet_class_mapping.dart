@@ -22,6 +22,10 @@
 /// - Office: Printer, computer, radio, telephone (NEW)
 library;
 
+import 'package:flutter/services.dart' show rootBundle;
+
+import '../utils/app_logger.dart';
+
 class YAMNetClassMapping {
   /// Sound pollution categories
   static const String categoryTraffic = "Traffic";
@@ -42,446 +46,79 @@ class YAMNetClassMapping {
   static const String categoryWeather = "Weather";
   static const String categoryOffice = "Office";
 
+  /// Live-display-only pseudo-category for below-threshold classifications.
+  /// NEVER persisted to Firestore (see the dashboard save-timer gating).
+  static const String categoryUncertain = "Uncertain";
+
   /// Pollution type classification
   static const String typePollution = "Pollution";
   static const String typeAmbient = "Ambient";
 
-  /// YAMNet AudioSet class index to name mapping
-  /// Maps class indices (0-520) to AudioSet class names
-  /// Source: YAMNet AudioSet ontology
-  static final Map<int, String> indexToClassName = {
-    // Speech and human sounds
-    0: 'Speech',
-    1: 'Male speech, man speaking',
-    2: 'Female speech, woman speaking',
-    3: 'Child speech, kid speaking',
-    4: 'Conversation',
-    5: 'Narration, monologue',
-    6: 'Babbling',
-    7: 'Speech synthesizer',
-    8: 'Shout',
-    9: 'Screaming',
-    10: 'Whispering',
-    11: 'Laughter',
-    12: 'Chuckle, chortle',
-    13: 'Belly laugh',
-    14: 'Giggle',
-    15: 'Snicker',
-    16: 'Breathing',
-    17: 'Gasp',
-    18: 'Cough',
-    19: 'Throat clearing',
-    20: 'Sneeze',
-    21: 'Sniff',
-    22: 'Run',
-    23: 'Shuffle',
-    24: 'Walk, footsteps',
-    25: 'Chewing, mastication',
-    26: 'Biting',
-    27: 'Gargling',
-    28: 'Stomach rumble',
-    29: 'Burping, eructation',
-    30: 'Hiccup',
-    31: 'Fart',
-    32: 'Hands',
-    33: 'Finger snapping',
-    34: 'Clapping',
-    35: 'Heart sounds, heartbeat',
+  /// YAMNet class index -> official AudioSet display name.
+  ///
+  /// Populated from assets/models/yamnet_class_map.csv (the official class
+  /// map shipped with the yamnet.tflite model) by [loadOfficialClassMap].
+  /// Empty until the load completes. Never hand-edit class names here —
+  /// the CSV is the single source of truth (finding ml-1).
+  static final Map<int, String> indexToClassName = {};
 
-    // Music and genres
-    137: 'Music',
-    138: 'Musical instrument',
-    139: 'Piano',
-    140: 'Electric piano',
-    141: 'Organ',
-    142: 'Synthesizer',
-    143: 'Guitar',
-    144: 'Acoustic guitar',
-    145: 'Drum',
-    146: 'Drum kit',
-    147: 'Bass drum',
-    148: 'Snare drum',
-    149: 'Rimshot',
-    150: 'Cymbal',
-    151: 'Hi-hat',
-    152: 'Tabla',
-    153: 'Bass guitar',
-    154: 'Electric guitar',
-    155: 'Steel guitar, slide guitar',
-    156: 'Tapping (guitar technique)',
-    157: 'Strum',
-    158: 'Banjo',
-    159: 'Sitar',
-    160: 'Mandolin',
-    161: 'Ukulele',
-    162: 'Keyboard (musical)',
-    163: 'Accordion',
-    164: 'Harmonica',
-    165: 'Wind instrument, woodwind instrument',
-    166: 'Flute',
-    167: 'Saxophone',
-    168: 'Clarinet',
-    169: 'Brass instrument',
-    170: 'Trumpet',
-    171: 'Trombone',
-    172: 'French horn',
-    173: 'Tuba',
-    174: 'String instrument',
-    175: 'Violin, fiddle',
-    176: 'Cello',
-    177: 'Double bass',
-    178: 'Harp',
-    179: 'Percussion',
-    180: 'Cowbell (instrument)',
-    181: 'Tambourine',
-    182: 'Rattle (instrument)',
-    183: 'Marimba, xylophone',
-    184: 'Music genre',
-    185: 'Rock music',
-    186: 'Heavy metal',
-    187: 'Punk rock',
-    188: 'Grunge',
-    189: 'Progressive rock',
-    190: 'Rock and roll',
-    191: 'Psychedelic rock',
-    192: 'Rhythm and blues',
-    193: 'Soul music',
-    194: 'Funk',
-    195: 'Disco',
-    196: 'Pop music',
-    197: 'Hip hop music',
-    198: 'Rapping',
-    199: 'Electronic music',
-    200: 'House music',
-    201: 'Techno',
-    202: 'Dubstep',
-    203: 'Drum and bass',
-    204: 'Electronic dance music',
-    205: 'Ambient music',
-    206: 'Trance music',
-    207: 'Music of Latin America',
-    208: 'Salsa music',
-    209: 'Reggae',
-    210: 'Country music',
-    211: 'Jazz',
-    212: 'Swing music',
-    213: 'Bluegrass',
-    214: 'Classical music',
-    215: 'Opera',
-    216: 'Choir',
-    217: 'Traditional music',
-    218: 'Middle Eastern music',
-    219: 'Carnatic music',
-    220: 'Music of Bollywood',
-    221: 'Singing',
-    222: 'Vocal music',
-    223: 'Song',
-    224: 'Jingle (music)',
-    225: 'Humming',
-    226: 'Yodeling',
-    227: 'Chant',
-    228: 'Mantra',
+  /// Number of classes the bundled YAMNet model outputs.
+  static const int officialClassCount = 521;
 
-    // Traffic and vehicles
-    310: 'Vehicle',
-    311: 'Car',
-    312: 'Motor vehicle (road)',
-    313: 'Vehicle horn, car horn, honking',
-    314: 'Car alarm',
-    315: 'Accelerating, revving, vroom',
-    316: 'Engine',
-    317: 'Engine starting',
-    318: 'Traffic noise, roadway noise',
-    319: 'Truck',
-    320: 'Bus',
-    321: 'Motorcycle',
-    322: 'Scooter',
+  /// Whether the official class map has been loaded successfully.
+  static bool get isClassMapLoaded =>
+      indexToClassName.length == officialClassCount;
 
-    // Construction
-    388: 'Jackhammer',
-    389: 'Drill',
-    390: 'Power tool',
-    391: 'Sawing',
-    392: 'Hammer',
-    393: 'Hammering',
+  /// Loads and parses the official YAMNet class map asset.
+  ///
+  /// CSV format: `index,mid,display_name` where display_name may be quoted
+  /// and contain commas (e.g. `1,/m/0ytgt,"Child speech, kid speaking"`).
+  /// Returns true only when all 521 rows parsed. Safe to call repeatedly.
+  static Future<bool> loadOfficialClassMap() async {
+    if (isClassMapLoaded) return true;
 
-    // Industrial
-    394: 'Machine',
-    395: 'Machinery',
-    396: 'Industrial noise',
-    397: 'Motor',
-    398: 'Medium engine (mid frequency)',
-    399: 'Light engine (high frequency)',
+    try {
+      final csv =
+          await rootBundle.loadString('assets/models/yamnet_class_map.csv');
+      final parsed = <int, String>{};
+      final lines = csv.split('\n');
 
-    // Nature and Animals
-    36: 'Domestic animals, pets',
-    37: 'Dog',
-    38: 'Bark',
-    39: 'Yip',
-    40: 'Howl',
-    41: 'Bow-wow',
-    42: 'Growling',
-    43: 'Bay',
-    44: 'Cat',
-    45: 'Meow',
-    46: 'Purr',
-    47: 'Hiss (cat)',
-    48: 'Livestock, farm animals, working animals',
-    49: 'Horse',
-    50: 'Clip-clop',
-    51: 'Neigh, whinny',
-    52: 'Cattle, bovinae',
-    53: 'Moo',
-    54: 'Cowbell',
-    55: 'Pig',
-    56: 'Oink',
-    57: 'Goat',
-    58: 'Bleat',
-    59: 'Sheep',
-    60: 'Fowl',
-    61: 'Chicken, rooster',
-    62: 'Cluck',
-    63: 'Crowing, cock-a-doodle-doo',
-    64: 'Turkey',
-    65: 'Gobble',
-    66: 'Duck',
-    67: 'Quack',
-    68: 'Goose',
-    69: 'Honk',
-    70: 'Bird',
-    71: 'Bird vocalization, bird call, bird song',
-    72: 'Chirp, tweet',
-    73: 'Squawk',
-    74: 'Pigeon, dove',
-    75: 'Coo',
-    76: 'Crow',
-    77: 'Caw',
-    78: 'Owl',
-    79: 'Hoot',
-    80: 'Insect',
-    81: 'Cricket',
-    82: 'Mosquito',
-    83: 'Fly, housefly',
-    84: 'Buzz',
-    85: 'Bee, wasp, etc.',
-    86: 'Frog',
-    87: 'Croak',
-    88: 'Snake',
-    89: 'Rattle',
-    90: 'Whale vocalization',
-    91: 'Environmental sounds',
-    92: 'Wind',
-    93: 'Rustling leaves',
-    94: 'Wind chime',
-    95: 'Rain',
-    96: 'Rain on surface',
-    97: 'Raindrop',
-    98: 'Thunder',
-    99: 'Thunderstorm',
-    100: 'Water',
-    101: 'Stream',
-    102: 'Waterfall',
-    103: 'Ocean',
-    104: 'Waves, surf',
-    105: 'Gurgling',
-    106: 'Fire',
-    107: 'Crackle',
-    108: 'Roaring',
+      // Skip the header row (i = 1).
+      for (var i = 1; i < lines.length; i++) {
+        final line = lines[i].trim();
+        if (line.isEmpty) continue;
 
-    // Domestic and household sounds
-    229: 'Domestic sounds, home sounds',
-    230: 'Door',
-    231: 'Doorbell',
-    232: 'Knock',
-    233: 'Slam',
-    234: 'Squeak',
-    235: 'Cupboard open or close',
-    236: 'Drawer open or close',
-    237: 'Dishes, pots, and pans',
-    238: 'Cutlery, silverware',
-    239: 'Chopping (food)',
-    240: 'Frying (food)',
-    241: 'Microwave oven',
-    242: 'Blender',
-    243: 'Water tap, faucet',
-    244: 'Sink (filling or washing)',
-    245: 'Bathtub (filling or washing)',
-    246: 'Hair dryer',
-    247: 'Toilet flush',
-    248: 'Electric toothbrush',
-    249: 'Vacuum cleaner',
-    250: 'Zipper (clothing)',
-    251: 'Keys jangling',
-    252: 'Coin (dropping)',
-    253: 'Scissors',
-    254: 'Electric shaver, electric razor',
-    255: 'Shuffling cards',
-    256: 'Typing',
-    257: 'Typewriter',
-    258: 'Computer keyboard',
-    259: 'Writing',
-    260: 'Mechanical pencil',
-    261: 'Scissors',
-    262: 'Alarm',
-    263: 'Clock',
-    264: 'Tick',
-    265: 'Tick-tock',
-    266: 'Alarm clock',
-    267: 'Clock alarm',
-    268: 'Telephone',
-    269: 'Telephone bell ringing',
-    270: 'Ringtone',
-    271: 'Telephone dialing, DTMF',
-    272: 'Dial tone',
-    273: 'Busy signal',
+        final firstComma = line.indexOf(',');
+        final secondComma = line.indexOf(',', firstComma + 1);
+        if (firstComma < 0 || secondComma < 0) continue;
 
-    // More vehicles and traffic
-    274: 'Siren',
-    275: 'Civil defense siren',
-    276: 'Buzzer',
-    277: 'Smoke detector, smoke alarm',
-    278: 'Fire alarm',
-    279: 'Foghorn',
-    280: 'Whistle',
-    281: 'Steam whistle',
-    282: 'Emergency vehicle',
-    283: 'Police car (siren)',
-    284: 'Ambulance (siren)',
-    285: 'Fire engine, fire truck (siren)',
-    286: 'Air horn, truck horn',
-    287: 'Reversing beeps',
-    288: 'Train',
-    289: 'Train whistle',
-    290: 'Train horn',
-    291: 'Railroad car, train wagon',
-    292: 'Train wheels squealing',
-    293: 'Subway, metro, underground',
-    294: 'Aircraft',
-    295: 'Aircraft engine',
-    296: 'Jet engine',
-    297: 'Propeller, airscrew',
-    298: 'Helicopter',
-    299: 'Fixed-wing aircraft, airplane',
-    300: 'Bicycle',
-    301: 'Skateboard',
-    302: 'Engine starting',
-    303: 'Idling',
-    304: 'Accelerating',
-    305: 'Revving',
-    306: 'Car passing by',
-    307: 'Race car, auto racing',
-    308: 'Auto rickshaw',
-    309: 'Go-kart',
+        final index = int.tryParse(line.substring(0, firstComma));
+        if (index == null) continue;
 
-    // Religious
-    323: 'Bell',
-    324: 'Church bell',
-    325: 'Jingle bell',
-    326: 'Bicycle bell',
-    327: 'Chime',
-    328: 'Wind chime',
-    329: 'Gong',
-    330: 'Tuning fork',
+        var name = line.substring(secondComma + 1);
+        if (name.length >= 2 && name.startsWith('"') && name.endsWith('"')) {
+          name = name.substring(1, name.length - 1).replaceAll('""', '"');
+        }
+        parsed[index] = name;
+      }
 
-    // Other common environmental sounds
-    331: 'Silence',
-    332: 'Background noise',
-    333: 'White noise',
-    334: 'Pink noise',
-    335: 'Static',
-    336: 'Hiss',
-    337: 'Pop',
-    338: 'Crack',
-    339: 'Crunch',
-    340: 'Rustle',
-    341: 'Whir',
-    342: 'Clang',
-    343: 'Thud',
-    344: 'Thump',
-    345: 'Creak',
-    346: 'Scrape',
-    347: 'Rub',
+      if (parsed.length != officialClassCount) {
+        AppLogger.warning(
+            'yamnet_class_map.csv parsed ${parsed.length} classes '
+            '(expected $officialClassCount)');
+        return false;
+      }
 
-    // Missing environmental sounds (380-390)
-    380: 'Running',
-    381: 'Jogging',
-    382: 'Treadmill',
-    383: 'Bowling',
-    384: 'Billiards',
-    385: 'Pool (game)',
-    386: 'Swimming',
-    387: 'Diving',
-
-    // CRITICAL MISSING CLASSES (420-430) - Environmental/Background sounds
-    420: 'Environmental noise',
-    421: 'Room tone',
-    422: 'Ambient noise',
-    423: 'Noise floor',
-    424: 'Reverberation',
-    425: 'Echo',
-    426: 'Acoustic environment',
-    427: 'Soundscapes',
-    428: 'Atmospheric sounds',
-    429: 'Environmental ambient',
-    430: 'Background ambient',
-
-    // Sports and recreation (continued)
-    481: 'Water polo',
-    482: 'Playground',
-    483: 'Recreation',
-    484: 'Stadium',
-    485: 'Sports crowd',
-    486: 'Audience',
-    487: 'Cheering (sports)',
-    488: 'Booing',
-    489: 'Whistle (referee)',
-    490: 'Air horn (sports)',
-    491: 'Skateboard (trick)',
-    492: 'Surfing',
-    493: 'Snowboarding',
-    494: 'Skiing',
-    495: 'Ice skating',
-    496: 'Rollerblading',
-    497: 'Cycling (sport)',
-    498: 'Mountain biking',
-    499: 'Rock climbing',
-    500: 'Martial arts',
-    501: 'Boxing',
-    502: 'Wrestling',
-    503: 'Fencing',
-
-    // CRITICAL MISSING CLASSES (470-480) - Weather and nature sounds
-    470: 'Natural sounds',
-    471: 'Outdoor ambient',
-    472: 'Forest ambience',
-    473: 'Field recording',
-    474: 'Environmental recording',
-    475: 'Location sound',
-    476: 'Field ambient',
-    477: 'Nature ambience',
-    478: 'Outdoor soundscape',
-    479: 'Environmental sound effects',
-    480: 'Nature sounds',
-
-    // Office and technology
-    504: 'Printer',
-    505: 'Copier',
-    506: 'Scanner',
-    507: 'Fax',
-    508: 'Computer fan',
-    509: 'Hard drive',
-    510: 'Keyboard click',
-    511: 'Mouse click',
-    512: 'Office ambient',
-    513: 'Cubicle',
-    514: 'Meeting room',
-    515: 'Conference call',
-    516: 'Radio',
-    517: 'Broadcast',
-    518: 'Podcast',
-    519: 'News broadcast',
-    520: 'Talk show',
-  };
+      indexToClassName
+        ..clear()
+        ..addAll(parsed);
+      AppLogger.info('Official YAMNet class map loaded (521 classes)');
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to load yamnet_class_map.csv', e);
+      return false;
+    }
+  }
 
   /// Map YAMNet class names to our custom categories
   /// Based on YAMNet's AudioSet ontology
@@ -758,8 +395,6 @@ class YAMNetClassMapping {
     'Air horn, truck horn': categoryTraffic,
     'Reversing beeps': categoryTraffic,
     'Steam whistle': categoryTransport,
-    'Whistle (referee)': categorySports,
-    'Mouth whistle': categoryBodySounds,
     'Whistle': categoryOther,
 
     // More transportation
@@ -783,31 +418,13 @@ class YAMNetClassMapping {
     'Auto rickshaw': categoryTuktuk,
     'Go-kart': categoryTuktuk,
 
-    // Environmental/Background sounds (NEW - from logs)
+    // Environmental/room-tone sounds (official AudioSet names)
     'Environmental noise': categoryOther,
-    'Room tone': categoryOther,
-    'Ambient noise': categoryOther,
-    'Noise floor': categoryOther,
     'Reverberation': categoryOther,
     'Echo': categoryOther,
-    'Acoustic environment': categoryOther,
-    'Soundscapes': categoryNature,
-    'Atmospheric sounds': categoryWeather,
-    'Environmental ambient': categoryNature,
-    'Background ambient': categoryOther,
     
-    // Nature/Weather ambient (NEW - from logs)
-    'Natural sounds': categoryNature,
-    'Outdoor ambient': categoryNature,
-    'Forest ambience': categoryNature,
+    // Field recording (official AudioSet name, index 520)
     'Field recording': categoryNature,
-    'Environmental recording': categoryNature,
-    'Location sound': categoryNature,
-    'Field ambient': categoryNature,
-    'Nature ambience': categoryNature,
-    'Outdoor soundscape': categoryNature,
-    'Environmental sound effects': categoryNature,
-    'Nature sounds': categoryNature,
 
     // Nature / Ambient
     'Bird': categoryNature,
@@ -890,72 +507,109 @@ class YAMNetClassMapping {
     'Bay': categoryNature,
     'Clip-clop': categoryNature,
 
-    // Sports and recreation (NEW)
-    'Gym': categorySports,
-    'Weight lifting': categorySports,
-    'Exercise': categorySports,
-    'Aerobics': categorySports,
-    'Yoga': categorySports,
-    'Stretching': categorySports,
-    'Running': categorySports,
-    'Jogging': categorySports,
-    'Treadmill': categorySports,
-    'Bowling': categorySports,
-    'Billiards': categorySports,
-    'Pool (game)': categorySports,
-    'Swimming': categorySports,
-    'Diving': categorySports,
-    'Water polo': categorySports,
-    'Playground': categorySports,
-    'Stadium': categorySports,
-    'Sports crowd': categorySports,
-    'Audience': categorySports,
-    'Cheering (sports)': categorySports,
-    'Booing': categorySports,
-    'Air horn (sports)': categorySports,
-    'Skateboard (trick)': categorySports,
-    'Surfing': categorySports,
-    'Snowboarding': categorySports,
-    'Skiing': categorySports,
-    'Ice skating': categorySports,
-    'Rollerblading': categorySports,
-    'Cycling (sport)': categorySports,
-    'Mountain biking': categorySports,
-    'Rock climbing': categorySports,
-    'Martial arts': categorySports,
-    'Boxing': categorySports,
-    'Wrestling': categorySports,
-    'Fencing': categorySports,
+    // Sports and recreation — only 'Basketball bounce' (official index 459)
+    // maps directly; everything else reaches Sports via keyword fallback
+    // in _categorizeByKeywords or via manual reports.
+    'Basketball bounce': categorySports,
 
-    // Office and technology (NEW)
+    // Office and technology (official AudioSet names only:
+    // indices 408 Cash register, 409 Printer, 410-411 cameras, 519 Radio)
     'Printer': categoryOffice,
-    'Copier': categoryOffice,
-    'Scanner': categoryOffice,
-    'Fax': categoryOffice,
-    'Computer fan': categoryOffice,
-    'Hard drive': categoryOffice,
-    'Keyboard click': categoryOffice,
-    'Mouse click': categoryOffice,
-    'Office ambient': categoryOffice,
-    'Cubicle': categoryOffice,
-    'Meeting room': categoryOffice,
-    'Conference call': categoryOffice,
     'Radio': categoryOffice,
-    'Broadcast': categoryOffice,
-    'Podcast': categoryOffice,
-    'News broadcast': categoryOffice,
-    'Talk show': categoryOffice,
-    'Answering machine': categoryOffice,
-    'Voicemail': categoryOffice,
     'Cash register': categoryOffice,
-    'ATM': categoryOffice,
-    'Point of sale': categoryOffice,
-    'Barcode scanner': categoryOffice,
-    'Calculator': categoryOffice,
-    'Projector': categoryOffice,
-    'Whiteboard': categoryOffice,
-    'Shredder': categoryOffice,
-    'Stapler': categoryOffice,
+    'Camera': categoryOffice,
+    'Single-lens reflex camera': categoryOffice,
+
+    // ── Official AudioSet names previously unmapped (ml-1 re-audit) ──
+    // Human voice (crying/laughing family stays with Speech, matching
+    // the existing 'Laughter' -> Speech decision)
+    'Bellow': categorySpeech,
+    'Whoop': categorySpeech,
+    'Children shouting': categorySpeech,
+    'Baby laughter': categorySpeech,
+    'Crying, sobbing': categorySpeech,
+    'Baby cry, infant cry': categorySpeech,
+    'Whimper': categorySpeech,
+    'Wail, moan': categorySpeech,
+    'Sigh': categorySpeech,
+    'Groan': categorySpeech,
+    'Grunt': categorySpeech,
+    'Chatter': categorySpeech,
+    // Body sounds
+    'Whistling': categoryBodySounds,
+    'Wheeze': categoryBodySounds,
+    'Snoring': categoryBodySounds,
+    'Pant': categoryBodySounds,
+    'Snort': categoryBodySounds,
+    'Heart murmur': categoryBodySounds,
+    // Animals / nature
+    'Wild animals': categoryNature,
+    'Roaring cats (lions, tigers)': categoryNature,
+    'Roar': categoryNature,
+    'Canidae, dogs, wolves': categoryNature,
+    'Rodents, rats, mice': categoryNature,
+    'Mouse': categoryNature,
+    'Patter': categoryNature,
+    'Bird flight, flapping wings': categoryNature,
+    'Caterwaul': categoryNature,
+    'Whimper (dog)': categoryNature,
+    'Steam': categoryNature,
+    'Outside, rural or natural': categoryNature,
+    // Water vehicles / rail
+    'Boat, Water vehicle': categoryTransport,
+    'Sailboat, sailing ship': categoryTransport,
+    'Rowboat, canoe, kayak': categoryTransport,
+    'Motorboat, speedboat': categoryTransport,
+    'Ship': categoryTransport,
+    'Rail transport': categoryTransport,
+    // Road vehicles
+    'Air brake': categoryTraffic,
+    'Ice cream truck, ice cream van': categoryTraffic,
+    'Toot': categoryTraffic,
+    'Heavy engine (low frequency)': categoryTraffic,
+    'Engine knocking': categoryTraffic,
+    // Impulsive/percussive noise — Construction, consistent with the
+    // existing 'Boom'/'Bang' mapping and the explosion/firework keyword rule
+    "Dental drill, dentist's drill": categoryConstruction,
+    'Tools': categoryConstruction,
+    'Explosion': categoryConstruction,
+    'Gunshot, gunfire': categoryConstruction,
+    'Machine gun': categoryConstruction,
+    'Fusillade': categoryConstruction,
+    'Artillery fire': categoryConstruction,
+    'Cap gun': categoryConstruction,
+    'Fireworks': categoryConstruction,
+    'Firecracker': categoryConstruction,
+    'Burst, pop': categoryConstruction,
+    'Eruption': categoryConstruction,
+    // Mechanisms
+    'Mechanisms': categoryIndustrial,
+    'Ratchet, pawl': categoryIndustrial,
+    'Gears': categoryIndustrial,
+    'Pulleys': categoryIndustrial,
+    'Mains hum': categoryIndustrial,
+    'Sewing machine': categoryDomestic,
+    'Television': categoryDomestic,
+    // Alarms — without an exact entry, official 'Alarm' (index 382) would
+    // partial-match 'Car alarm' and be misfiled under Traffic
+    'Alarm': categoryAlarm,
+    'Beep, bleep': categoryAlarm,
+    // Room/environment tones (very common argmaxes in real recordings)
+    'Inside, small room': categoryOther,
+    'Inside, large room or hall': categoryOther,
+    'Inside, public space': categoryOther,
+    'Outside, urban or manmade': categoryOther,
+    'Noise': categoryOther,
+    'Cacophony': categoryOther,
+    'Distortion': categoryOther,
+    'Sidetone': categoryOther,
+    'Throbbing': categoryOther,
+    'Vibration': categoryOther,
+    'Sine wave': categoryOther,
+    'Harmonic': categoryOther,
+    'Chirp tone': categoryOther,
+    'Sound effect': categoryOther,
+    'Pulse': categoryOther,
 
     // Other / Ambient
     'Silence': categoryOther,
@@ -996,6 +650,7 @@ class YAMNetClassMapping {
       case categorySports:
       case categoryWeather:
       case categoryOffice:
+      case categoryUncertain:
         return typeAmbient;
 
       default:
@@ -1003,14 +658,27 @@ class YAMNetClassMapping {
     }
   }
 
+  /// Single source of truth for bucketing a `soundClass` value AS STORED in
+  /// Firestore into Pollution/Ambient. Handles the two manual-report values
+  /// from report_noise_screen.dart ('Speech-Pollution'/'Speech-Ambient')
+  /// that are not YAMNet categories, then defers to [getSoundType].
+  /// Use this everywhere instead of hand-maintained category lists
+  /// (findings flow3-8 / analytics-4).
+  static String soundTypeForStoredClass(String storedClass) {
+    if (storedClass == 'Speech-Pollution') return typePollution;
+    if (storedClass == 'Speech-Ambient') return typeAmbient;
+    return getSoundType(storedClass);
+  }
+
   /// Get category from YAMNet class name or index
   static String getCategoryFromClassName(String className) {
     String? actualClassName;
+    int? classIndex;
 
     // Check if className is in format "YAMNet_Class_123"
     if (className.startsWith('YAMNet_Class_')) {
       final indexStr = className.replaceFirst('YAMNet_Class_', '');
-      final classIndex = int.tryParse(indexStr);
+      classIndex = int.tryParse(indexStr);
 
       if (classIndex != null && indexToClassName.containsKey(classIndex)) {
         // Convert index to AudioSet class name
@@ -1039,27 +707,40 @@ class YAMNetClassMapping {
     }
 
     // Try intelligent categorization by keywords
-    return _categorizeByKeywords(actualClassName, null);
+    return _categorizeByKeywords(actualClassName, classIndex);
   }
 
   /// Intelligent categorization for unmapped classes based on keywords
   static String _categorizeByKeywords(String className, int? classIndex) {
     final lower = className.toLowerCase();
 
-    // Range-based fallback for gap indices where the class name is still
-    // "YAMNet_Class_N" (no indexToClassName entry). Uses AudioSet ontology
-    // structure to assign a reasonable category without guessing exact names.
+    // Range-based fallback for "YAMNet_Class_N" placeholders (only produced
+    // when the official class map failed to load). Coarse buckets follow the
+    // OFFICIAL yamnet_class_map.csv ordering, verified against the CSV:
+    // 0 Speech..35 Whistling, 36 Breathing..60 Heart murmur,
+    // 61 Cheering..66 Children playing, 67 Animal..131 Whale vocalization,
+    // 132 Music..276 Scary music, 277 Wind..281 Thunder, 282 Water..293
+    // Crackle, 294 Vehicle..321 Traffic noise, 322 Rail transport..336
+    // Skateboard, 337 Engine..347 Accelerating, 348 Door..388 Busy signal,
+    // 389 Alarm clock..395 Foghorn, 406 Fan/407 A/C, 408 Cash register..412
+    // Tools, 413 Hammer..430 Boom. Everything else: Other.
     if (classIndex != null && className.startsWith('YAMNet_Class_')) {
-      if (classIndex >= 137 && classIndex <= 228) return categoryMusic;
-      if (classIndex >= 0 && classIndex <= 15) return categorySpeech;
-      if (classIndex >= 16 && classIndex <= 35) return categoryBodySounds;
-      if (classIndex >= 36 && classIndex <= 136) return categoryNature;   // 36-108 animals, 109-136 more animals
-      if (classIndex >= 229 && classIndex <= 309) return categoryDomestic;
-      if (classIndex >= 310 && classIndex <= 373) return categoryTraffic;  // 323-347 have named entries; raw gaps default to Traffic
-      if (classIndex >= 374 && classIndex <= 387) return categorySports;
-      if (classIndex >= 388 && classIndex <= 393) return categoryConstruction;
-      if (classIndex >= 394 && classIndex <= 399) return categoryIndustrial;
-      // Indices 137-228 (Music), 400-520: fall through to keyword checks below
+      if (classIndex >= 0 && classIndex <= 34) return categorySpeech;
+      if (classIndex >= 35 && classIndex <= 60) return categoryBodySounds;
+      if (classIndex >= 61 && classIndex <= 66) return categorySpeech;
+      if (classIndex >= 67 && classIndex <= 131) return categoryNature;
+      if (classIndex >= 132 && classIndex <= 276) return categoryMusic;
+      if (classIndex >= 277 && classIndex <= 281) return categoryWeather;
+      if (classIndex >= 282 && classIndex <= 293) return categoryNature;
+      if (classIndex >= 294 && classIndex <= 321) return categoryTraffic;
+      if (classIndex >= 322 && classIndex <= 336) return categoryTransport;
+      if (classIndex >= 337 && classIndex <= 347) return categoryTraffic;
+      if (classIndex >= 348 && classIndex <= 388) return categoryDomestic;
+      if (classIndex >= 389 && classIndex <= 395) return categoryAlarm;
+      if (classIndex >= 406 && classIndex <= 407) return categoryIndustrial;
+      if (classIndex >= 408 && classIndex <= 412) return categoryOffice;
+      if (classIndex >= 413 && classIndex <= 430) return categoryConstruction;
+      return categoryOther;
     }
 
     // Transport keywords (train, aircraft — checked before general Traffic)
@@ -1487,6 +1168,8 @@ class YAMNetClassMapping {
         return '🌦️';
       case categoryOffice:
         return '💼';
+      case categoryUncertain:
+        return '❓';
       case categoryOther:
       default:
         return '🔊';
@@ -1528,6 +1211,8 @@ class YAMNetClassMapping {
         return 0xFF039BE5; // Light Blue (weather)
       case categoryOffice:
         return 0xFF5E35B1; // Deep Purple (office)
+      case categoryUncertain:
+        return 0xFF757575; // Dark Grey (uncertain)
       case categoryOther:
       default:
         return 0xFF9E9E9E; // Grey
