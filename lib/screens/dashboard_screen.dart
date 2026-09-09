@@ -89,6 +89,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // Timer for periodic sound classification (every 5 seconds)
   Timer? _classificationTimer;
 
+  // One-shot auto-stop timer ('recording_duration_minutes' pref — settings-6)
+  Timer? _autoStopTimer;
+
   // Track if we've already shown alert for current high noise session
   bool _hasShownHighNoiseAlert = false;
 
@@ -677,6 +680,27 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         
         _performSoundClassification();
       });
+
+      // Auto-stop after the user's chosen duration
+      // ('recording_duration_minutes' pref, 1-60 min, default 10 — settings-6).
+      final autoStopMinutes =
+          (prefs.getInt('recording_duration_minutes') ?? 10).clamp(1, 60).toInt();
+      _autoStopTimer = Timer(Duration(minutes: autoStopMinutes), () {
+        if (!_isRecording || !mounted) return;
+        AppLogger.info(
+          'Auto-stopping recording after $autoStopMinutes minute(s)',
+        );
+        _stopRecording();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Recording stopped automatically after $autoStopMinutes min '
+              '(change in Settings > Recording Duration)',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      });
     } catch (e) {
       AppLogger.error('Error starting recording', e);
       // Roll back: tear down anything partially started and clear the flag
@@ -727,6 +751,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     _audioStreamSubscription?.cancel();
     _saveTimer?.cancel();
     _classificationTimer?.cancel();
+    _autoStopTimer?.cancel();
+    _autoStopTimer = null;
 
     // Stop audio recorder with timeout (CRITICAL FIX - prevents hanging)
     if (_audioRecorder != null && _audioRecorder!.isRecording) {

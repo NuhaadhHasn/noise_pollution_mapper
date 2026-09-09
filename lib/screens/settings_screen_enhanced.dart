@@ -28,7 +28,7 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
   bool _anonymizeLocation = false;
   bool _highNoiseAlerts = true;
   bool _dailyReminders = false;
-  int _recordingDuration = 10; // seconds
+  int _recordingDurationMinutes = 10; // minutes (auto-stop)
   int _saveFrequency = 5; // seconds
   double _dbThreshold = 70.0;
 
@@ -49,6 +49,10 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     // all readings already flow to the shared community collection, and the
     // real privacy control is 'anonymize_location' (playbook 04).
     await prefs.remove('share_data_with_researchers');
+    // settings-6: old key stored SECONDS and was never consumed; replaced by
+    // 'recording_duration_minutes' (auto-stop). Removed so a stored value is
+    // never reinterpreted under the new unit.
+    await prefs.remove('recording_duration');
     if (mounted) {
       setState(() {
         _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
@@ -56,7 +60,8 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
         _dailyReminders = prefs.getBool('daily_reminders') ?? false;
         _darkMode = prefs.getBool('dark_mode') ?? true;
         _anonymizeLocation = prefs.getBool('anonymize_location') ?? false;
-        _recordingDuration = prefs.getInt('recording_duration') ?? 10;
+        _recordingDurationMinutes =
+            prefs.getInt('recording_duration_minutes') ?? 10;
         _saveFrequency = prefs.getInt('save_frequency') ?? 5;
         _dbThreshold = prefs.getDouble('db_threshold') ?? 70.0;
       });
@@ -134,13 +139,13 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           _buildSettingCard([
             _buildSliderSetting(
               'Recording Duration',
-              _recordingDuration.toDouble(),
+              _recordingDurationMinutes.toDouble(),
               1,
               60,
-              'seconds',
+              'min (auto-stop)',
               (val) {
-                setState(() => _recordingDuration = val.toInt());
-                _saveSetting('recording_duration', val.toInt());
+                setState(() => _recordingDurationMinutes = val.toInt());
+                _saveSetting('recording_duration_minutes', val.toInt());
               },
             ),
             _buildSliderSetting(
