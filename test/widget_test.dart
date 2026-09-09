@@ -5,6 +5,9 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+@Skip('arch-2: pre-existing failure — stale Flutter template counter test run against the real MyApp, which needs an initialized Firebase app; see audit/06_ARCHITECTURE_AND_CODE_QUALITY.md')
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
