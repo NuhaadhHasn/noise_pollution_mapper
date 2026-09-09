@@ -28,7 +28,6 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
   bool _anonymizeLocation = false;
   bool _highNoiseAlerts = true;
   bool _dailyReminders = false;
-  bool _shareDataWithResearchers = true;
   int _recordingDuration = 10; // seconds
   int _saveFrequency = 5; // seconds
   double _dbThreshold = 70.0;
@@ -46,13 +45,15 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     // response time, so these settings could never do anything.
     await prefs.remove('use_dba');
     await prefs.remove('use_fast_response');
+    // arch-1: 'share_data_with_researchers' had zero backend consumers;
+    // all readings already flow to the shared community collection, and the
+    // real privacy control is 'anonymize_location' (playbook 04).
+    await prefs.remove('share_data_with_researchers');
     if (mounted) {
       setState(() {
         _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
         _highNoiseAlerts = prefs.getBool('high_noise_alerts') ?? true;
         _dailyReminders = prefs.getBool('daily_reminders') ?? false;
-        _shareDataWithResearchers =
-            prefs.getBool('share_data_with_researchers') ?? true;
         _darkMode = prefs.getBool('dark_mode') ?? true;
         _anonymizeLocation = prefs.getBool('anonymize_location') ?? false;
         _recordingDuration = prefs.getInt('recording_duration') ?? 10;
@@ -212,15 +213,6 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
               (val) {
                 setState(() => _anonymizeLocation = val);
                 _saveSetting('anonymize_location', val);
-              },
-            ),
-            _buildSwitchSetting(
-              'Share Data with Researchers',
-              Icons.science,
-              _shareDataWithResearchers,
-              (val) {
-                setState(() => _shareDataWithResearchers = val);
-                _saveSetting('share_data_with_researchers', val);
               },
             ),
             _buildNavigationItem('Privacy Policy', Icons.policy, () {}),
