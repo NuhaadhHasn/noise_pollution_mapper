@@ -23,8 +23,6 @@ class SettingsScreenEnhanced extends StatefulWidget {
 
 class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
   // Settings values
-  bool _useDbA = true;
-  bool _useFastResponse = true;
   bool _notificationsEnabled = true;
   bool _darkMode = true;
   bool _anonymizeLocation = false;
@@ -43,10 +41,13 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    // Cleanup of legacy keys whose controls were removed (settings-6):
+    // phone hardware (noise_meter) exposes no A/C weighting or fast/slow
+    // response time, so these settings could never do anything.
+    await prefs.remove('use_dba');
+    await prefs.remove('use_fast_response');
     if (mounted) {
       setState(() {
-        _useDbA = prefs.getBool('use_dba') ?? true;
-        _useFastResponse = prefs.getBool('use_fast_response') ?? true;
         _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
         _highNoiseAlerts = prefs.getBool('high_noise_alerts') ?? true;
         _dailyReminders = prefs.getBool('daily_reminders') ?? false;
@@ -89,20 +90,6 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
           // APPEARANCE SECTION
           _buildSectionHeader('Appearance', Icons.palette),
           _buildSettingCard([
-            _buildToggleSetting('Decibel Scale', 'dBA', 'dBC', _useDbA, (val) {
-              setState(() => _useDbA = val);
-              _saveSetting('use_dba', val);
-            }),
-            _buildToggleSetting(
-              'Response Time',
-              'Fast',
-              'Slow',
-              _useFastResponse,
-              (val) {
-                setState(() => _useFastResponse = val);
-                _saveSetting('use_fast_response', val);
-              },
-            ),
             _buildSwitchSetting('Dark Mode', Icons.dark_mode, _darkMode, (val) {
               setState(() => _darkMode = val);
               _saveSetting('dark_mode', val);
@@ -129,6 +116,20 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
 
           // MEASUREMENT SECTION
           _buildSectionHeader('Measurement', Icons.mic),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Readings use your phone microphone\'s built-in response. '
+              'Professional A/C frequency weighting and fast/slow response '
+              'modes are not supported by phone hardware.',
+              style: TextStyle(
+                color: ThemeHelper.getSecondaryTextColor(
+                  context,
+                ).withValues(alpha: 0.8),
+                fontSize: 12,
+              ),
+            ),
+          ),
           _buildSettingCard([
             _buildSliderSetting(
               'Recording Duration',
@@ -366,71 +367,6 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(children: children),
-    );
-  }
-
-  // Toggle setting (dBA/dBC style)
-  Widget _buildToggleSetting(
-    String title,
-    String left,
-    String right,
-    bool isLeft,
-    Function(bool) onChanged,
-  ) {
-    final isDark = ThemeHelper.isDark(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: TextStyle(color: ThemeHelper.getTextColor(context)),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: isDark
-                  ? AppTheme.darkPurple
-                  : ThemeHelper.getPrimaryColor(context).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                _buildToggleButton(left, isLeft, () => onChanged(true)),
-                _buildToggleButton(right, !isLeft, () => onChanged(false)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildToggleButton(String text, bool isSelected, VoidCallback onTap) {
-    final isDark = ThemeHelper.isDark(context);
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? ThemeHelper.getPrimaryColor(context)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            color: isSelected
-                ? Colors.white
-                : isDark
-                ? AppTheme.textGray
-                : ThemeHelper.getTextColor(context).withValues(alpha: 0.7),
-            fontSize: 13,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
     );
   }
 
