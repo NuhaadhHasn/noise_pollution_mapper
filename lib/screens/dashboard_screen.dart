@@ -598,8 +598,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         AppLogger.debug('Started real audio capture at $_targetSampleRate Hz');
       }
 
-      // Start periodic Firebase saves (every 5 seconds)
-      _saveTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      // Start periodic Firebase saves at the user's chosen interval
+      // ('save_frequency' pref, 5-30 s, default 5 — settings-6).
+      final prefs = await SharedPreferences.getInstance();
+      final saveFrequencySeconds =
+          (prefs.getInt('save_frequency') ?? 5).clamp(5, 30).toInt();
+      AppLogger.debug('Save frequency: ${saveFrequencySeconds}s');
+      _saveTimer = Timer.periodic(Duration(seconds: saveFrequencySeconds), (
+        timer,
+      ) {
         // CRITICAL: Stop if not recording (prevents timer leak)
         if (!_isRecording || !mounted) return;
 
