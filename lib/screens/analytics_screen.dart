@@ -5,6 +5,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
 import '../services/yamnet_class_mapping.dart';
@@ -55,6 +56,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   double _minDb = 0;
   double _maxDb = 0;
   double _totalHours = 0;
+
+  /// Seconds between persisted readings, from the `save_frequency` setting
+  /// (cluster 09 made the dashboard save timer configurable 5-30 s). Refreshed
+  /// in [_loadStatistics]; 5 matches the dashboard default.
+  int _saveIntervalSeconds = 5;
   bool _isLoading = true;
 
   // Sound type filter (All / Pollution / Ambient)
@@ -133,6 +139,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     if (userId == null) {
       if (mounted) setState(() => _isLoading = false);
       return;
+    }
+
+    // Refresh the save interval so the Duration stat tracks the current
+    // `save_frequency` setting rather than assuming 5 s (see _applySnapshot).
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _saveIntervalSeconds = (prefs.getInt('save_frequency') ?? 5).clamp(5, 30);
+    } catch (e) {
+      AppLogger.warning('Could not read save_frequency; assuming 5s: $e');
+      _saveIntervalSeconds = 5;
     }
 
     final since = _getPeriodStartDate();
@@ -226,9 +242,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           : dbValues.reduce((a, b) => a + b) / dbValues.length;
       _minDb = dbValues.isEmpty ? 0 : dbValues.reduce((a, b) => a < b ? a : b);
       _maxDb = dbValues.isEmpty ? 0 : dbValues.reduce((a, b) => a > b ? a : b);
-      // fb-6/flow3-7: one reading is saved every 5 s while recording
-      // (dashboard _saveTimer), so hours = count * 5 s / 3600.
-      _totalHours = dbValues.length * 5 / 3600;
+      // fb-6/flow3-7: one reading is saved per save-timer tick while
+      // recording, so hours = count * interval / 3600. The interval is the
+      // `save_frequency` setting (5-30 s, cluster 09) — NOT a fixed 5 s, or a
+      // user on 30 s would see Duration under-report by 6x.
+      // Estimate, deliberately: readings persisted before a settings change
+      // used the older interval, and the interval is not stored per document.
+      _totalHours = dbValues.length * _saveIntervalSeconds / 3600;
       _totalCount = snapshot.docs.length; // incl. unclassified docs
       _soundTypeCounts = soundTypeCounts;
       _pollutionCount = pollutionCount;
