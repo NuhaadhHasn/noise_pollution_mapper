@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_logger.dart';
+import '../utils/payment_url_utils.dart';
 import '../utils/theme_helper.dart';
 import '../services/donation_service.dart';
 
@@ -143,17 +144,17 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
                 }
               },
               shouldOverrideUrlLoading: (controller, navigationAction) async {
-                final url = navigationAction.request.url?.toString() ?? '';
-                
-                // Allow PayPal domain navigation
-                if (url.contains('paypal.com') ||
-                    url.contains('paypalobjects.com') ||
-                    url.contains('braintreegateway.com')) {
+                final uri = navigationAction.request.url;
+
+                // Allow PayPal domain navigation (exact host or subdomain
+                // only — substring matching was bypassable, donate-2).
+                if (PaymentUrlUtils.isAllowedPaymentHost(uri)) {
                   return NavigationActionPolicy.ALLOW;
                 }
-                
+
                 // Block external navigation
-                AppLogger.warning('Blocked navigation to: $url');
+                AppLogger.warning(
+                    'Blocked navigation to: ${uri?.toString() ?? '(null)'}');
                 return NavigationActionPolicy.CANCEL;
               },
               onConsoleMessage: (controller, consoleMessage) {
