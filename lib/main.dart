@@ -61,6 +61,17 @@ Future<void> _initializeOptionalServices() async {
     // Initialize notifications
     await NotificationService.initialize();
     await NotificationService.requestPermission();
+
+    // Re-sync the daily reminder schedule with saved settings (settings-5).
+    final notifPrefs = await SharedPreferences.getInstance();
+    final dailyRemindersOn =
+        (notifPrefs.getBool('notifications_enabled') ?? true) &&
+        (notifPrefs.getBool('daily_reminders') ?? false);
+    if (dailyRemindersOn) {
+      await NotificationService.scheduleDailyReminder();
+    } else {
+      await NotificationService.cancelDailyReminder();
+    }
   } catch (e, stackTrace) {
     AppLogger.error('[Main] Notification init failed (non-fatal)', e, stackTrace);
   }

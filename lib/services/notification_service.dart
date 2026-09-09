@@ -1,11 +1,22 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
+import '../utils/app_logger.dart';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
   static bool _initialized = false;
+
+  // Notification id for the recurring daily reminder (settings-5).
+  // Ids 0 (high-noise) and 2 (export) are used elsewhere in this file.
+  static const int dailyReminderId = 1;
+
+  // Hour of day (local time) at which the daily reminder fires.
+  static const int dailyReminderHour = 19;
 
   // Initialize notifications
   static Future<void> initialize() async {
@@ -15,6 +26,16 @@ class NotificationService {
     const initSettings = InitializationSettings(android: androidSettings);
 
     await _notifications.initialize(initSettings);
+
+    // Timezone database is required for zonedSchedule (settings-5).
+    tzdata.initializeTimeZones();
+    try {
+      final localTimezone = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(localTimezone));
+    } catch (e) {
+      AppLogger.warning('Could not resolve local timezone, using default: $e');
+    }
+
     _initialized = true;
   }
 
@@ -59,8 +80,9 @@ class NotificationService {
     );
   }
 
-  // Show daily reminder
-  static Future<void> showDailyReminder() async {
+  // Schedule the recurring daily reminder at dailyReminderHour local time.
+  // Re-scheduling with the same id replaces any existing schedule (settings-5).
+  static Future<void> scheduleDailyReminder() async {
     final prefs = await SharedPreferences.getInstance();
     final notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
 
@@ -76,12 +98,43 @@ class NotificationService {
 
     const notificationDetails = NotificationDetails(android: androidDetails);
 
-    await _notifications.show(
-      1,
+    await _notifications.zonedSchedule(
+      dailyReminderId,
       '📊 Record Today',
       'Help map noise pollution in your area - Record now!',
+      _nextInstanceOfReminderTime(),
       notificationDetails,
+      // Still REQUIRED in flutter_local_notifications 18.0.1 (the spec claimed
+      // v18 removed it). iOS-only effect; this app initializes Android-only.
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      matchDateTimeComponents: DateTimeComponents.time,
     );
+    AppLogger.info(
+      'Daily reminder scheduled for $dailyReminderHour:00 local time',
+    );
+  }
+
+  // Cancel the recurring daily reminder.
+  static Future<void> cancelDailyReminder() async {
+    await _notifications.cancel(dailyReminderId);
+    AppLogger.info('Daily reminder cancelled');
+  }
+
+  static tz.TZDateTime _nextInstanceOfReminderTime() {
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      dailyReminderHour,
+    );
+    if (!scheduled.isAfter(now)) {
+      scheduled = scheduled.add(const Duration(days: 1));
+    }
+    return scheduled;
   }
 
   // Show data export notification

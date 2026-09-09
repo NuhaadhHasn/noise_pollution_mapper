@@ -8,6 +8,7 @@ import 'login_screen.dart';
 import 'edit_profile_screen.dart';
 import 'classification_guide_screen.dart';
 import 'donation_screen.dart';
+import '../services/notification_service.dart';
 import '../utils/theme_helper.dart';
 import '../utils/firestore_batch_utils.dart';
 import '../utils/app_logger.dart';
@@ -181,9 +182,16 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
               'Enable Notifications',
               Icons.notifications_active,
               _notificationsEnabled,
-              (val) {
+              (val) async {
                 setState(() => _notificationsEnabled = val);
-                _saveSetting('notifications_enabled', val);
+                await _saveSetting('notifications_enabled', val);
+                if (!val) {
+                  // OS-level schedules must be torn down explicitly; in-app
+                  // alerts already check this pref at fire time.
+                  await NotificationService.cancelDailyReminder();
+                } else if (_dailyReminders) {
+                  await NotificationService.scheduleDailyReminder();
+                }
               },
             ),
             _buildSwitchSetting(
@@ -199,9 +207,15 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
               'Daily Reminders',
               Icons.alarm,
               _dailyReminders,
-              (val) {
+              (val) async {
                 setState(() => _dailyReminders = val);
-                _saveSetting('daily_reminders', val);
+                // Save first: scheduleDailyReminder re-reads prefs.
+                await _saveSetting('daily_reminders', val);
+                if (val) {
+                  await NotificationService.scheduleDailyReminder();
+                } else {
+                  await NotificationService.cancelDailyReminder();
+                }
               },
             ),
           ]),
