@@ -77,6 +77,36 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
     if (value is String) await prefs.setString(key, value);
   }
 
+  /// Runs an OS-level notification schedule/cancel and keeps the switch
+  /// honest. Scheduling can fail for reasons the UI cannot predict (a dead
+  /// timezone database, an OEM alarm policy), and an unguarded failure left
+  /// the toggle reading ON with no schedule behind it and no feedback.
+  /// On failure the pref and the switch are both reverted.
+  Future<void> _applyReminderSchedule({
+    required Future<void> Function() action,
+    required String prefKey,
+    required bool requested,
+    required void Function(bool) revert,
+  }) async {
+    try {
+      await action();
+    } catch (e, st) {
+      AppLogger.error('Daily reminder schedule failed', e, st);
+      await _saveSetting(prefKey, !requested);
+      if (!mounted) return;
+      setState(() => revert(!requested));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+              'Could not update the daily reminder. Check the alarm '
+              'permission for this app and try again.'),
+          backgroundColor: ThemeHelper.getErrorColor(context),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -188,9 +218,19 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
                 if (!val) {
                   // OS-level schedules must be torn down explicitly; in-app
                   // alerts already check this pref at fire time.
-                  await NotificationService.cancelDailyReminder();
+                  await _applyReminderSchedule(
+                    action: NotificationService.cancelDailyReminder,
+                    prefKey: 'notifications_enabled',
+                    requested: val,
+                    revert: (v) => _notificationsEnabled = v,
+                  );
                 } else if (_dailyReminders) {
-                  await NotificationService.scheduleDailyReminder();
+                  await _applyReminderSchedule(
+                    action: NotificationService.scheduleDailyReminder,
+                    prefKey: 'notifications_enabled',
+                    requested: val,
+                    revert: (v) => _notificationsEnabled = v,
+                  );
                 }
               },
             ),
@@ -211,11 +251,14 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
                 setState(() => _dailyReminders = val);
                 // Save first: scheduleDailyReminder re-reads prefs.
                 await _saveSetting('daily_reminders', val);
-                if (val) {
-                  await NotificationService.scheduleDailyReminder();
-                } else {
-                  await NotificationService.cancelDailyReminder();
-                }
+                await _applyReminderSchedule(
+                  action: val
+                      ? NotificationService.scheduleDailyReminder
+                      : NotificationService.cancelDailyReminder,
+                  prefKey: 'daily_reminders',
+                  requested: val,
+                  revert: (v) => _dailyReminders = v,
+                );
               },
             ),
           ]),

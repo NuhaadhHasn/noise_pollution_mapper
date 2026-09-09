@@ -88,6 +88,35 @@ void main() {
     });
   });
 
+  group('PaymentUrlUtils.isAllowedPaymentHost — scheme', () {
+    test('rejects a cleartext downgrade of an allowed host', () {
+      // The webview runs MIXED_CONTENT_ALWAYS_ALLOW, so an http PayPal host
+      // must not be an allowed navigation.
+      expect(
+          PaymentUrlUtils.isAllowedPaymentHost(
+              Uri.parse('http://www.paypal.com/checkout')),
+          isFalse);
+      expect(
+          PaymentUrlUtils.isAllowedPaymentHost(
+              Uri.parse('http://paypal.com/')),
+          isFalse);
+    });
+
+    test('still accepts the https form', () {
+      expect(
+          PaymentUrlUtils.isAllowedPaymentHost(
+              Uri.parse('https://www.sandbox.paypal.com/cgi-bin/webscr')),
+          isTrue);
+    });
+
+    test('rejects non-web schemes that carry an allowed host', () {
+      expect(
+          PaymentUrlUtils.isAllowedPaymentHost(
+              Uri.parse('javascript://paypal.com/%0aalert(1)')),
+          isFalse);
+    });
+  });
+
   group('PaymentUrlUtils.classifyPaymentReturn', () {
     test('classifies success marker even with PayPal-appended params', () {
       expect(
@@ -107,6 +136,21 @@ void main() {
       expect(
           PaymentUrlUtils.classifyPaymentReturn(
               Uri.parse('https://www.paypal.com/cgi-bin/webscr?cmd=_donations')),
+          isNull);
+      // A normalized redirect with a trailing slash must still classify —
+      // otherwise a completed donation is silently never recorded.
+      expect(
+          PaymentUrlUtils.classifyPaymentReturn(
+              Uri.parse('https://noisemapper.app/donate/success/')),
+          PaymentReturnStatus.success);
+      expect(
+          PaymentUrlUtils.classifyPaymentReturn(
+              Uri.parse('https://noisemapper.app/donate/cancelled/?tx=9ZX')),
+          PaymentReturnStatus.cancelled);
+      // A deeper path is NOT our marker.
+      expect(
+          PaymentUrlUtils.classifyPaymentReturn(
+              Uri.parse('https://noisemapper.app/donate/success/extra')),
           isNull);
       expect(PaymentUrlUtils.classifyPaymentReturn(null), isNull);
       expect(
