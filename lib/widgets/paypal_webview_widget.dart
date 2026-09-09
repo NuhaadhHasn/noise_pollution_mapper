@@ -129,14 +129,20 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
               },
               onReceivedError: (controller, request, error) {
                 final requestUrl = request.url.toString();
-                AppLogger.error('PayPal error: ${error.description} (URL: $requestUrl)');
-                // Don't show error for PayPal domain errors (they're expected)
-                if (!requestUrl.contains('paypal.com')) {
-                  setState(() {
-                    _hasError = true;
-                    _errorMessage = error.description;
-                  });
+                AppLogger.error(
+                    'PayPal error: ${error.description} '
+                    '(URL: $requestUrl, mainFrame: ${request.isForMainFrame})');
+                // Subresource failures (images, scripts, analytics, CDN
+                // assets) must not replace a working checkout with a
+                // full-screen error (donate-3). Only main-frame failures
+                // mean the checkout itself is broken.
+                if (request.isForMainFrame != true) {
+                  return;
                 }
+                setState(() {
+                  _hasError = true;
+                  _errorMessage = error.description;
+                });
               },
               shouldOverrideUrlLoading: (controller, navigationAction) async {
                 final uri = navigationAction.request.url;
