@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'yamnet_class_mapping.dart';
 import '../utils/app_logger.dart';
@@ -31,6 +32,28 @@ class SoundClassificationService {
   /// (see the save-timer gating in dashboard_screen.dart).
   static const double confidenceThreshold = 0.30;
 
+  /// Margin below which the top-1 and top-2 scores are treated as a tie,
+  /// i.e. the reported label would be arbitrary (field test 12 §4.1).
+  ///
+  /// YAMNet emits 521 INDEPENDENT per-class scores - AudioSet is a
+  /// multi-label task and every class has its own logistic output, so the
+  /// scores do NOT sum to 1 and several can be high at once. This is
+  /// therefore a margin between two absolute confidences, not between
+  /// shares of one probability mass. Because co-present sources can each
+  /// score high legitimately, the gate only fires when the two classes
+  /// fall in DIFFERENT app categories - see [resolveCategory].
+  ///
+  /// Value: 0.10 (10 percentage points), one third of
+  /// [confidenceThreshold]. The field test measured the ambient street
+  /// noise winner at 0.33-0.58, so 10pp is ~20-30% of a typical winning
+  /// score in exactly the band where the reported category was observed
+  /// to flap between consecutive 5 s windows (a bird recording
+  /// alternating Nature -> Traffic -> Nature). It cannot fire on a winner
+  /// that is more than 10pp clear, which leaves the confirmed-correct
+  /// high-confidence results (finger snap 0.992, piano 0.969) alone
+  /// unless a different-category class also scores within 10pp of them.
+  static const double ambiguityMargin = 0.10;
+
   /// Classification frequency - every 5 seconds (matches Firebase save frequency)
   static const int classificationIntervalSeconds = 5;
 
@@ -41,6 +64,59 @@ class SoundClassificationService {
   factory SoundClassificationService() => _instance;
 
   SoundClassificationService._internal();
+
+  /// Official AudioSet display name for a YAMNet class index.
+  ///
+  /// The 'YAMNet_Class_' placeholder prefix is load-bearing: it is only
+  /// produced when the official class map failed to load, and
+  /// [YAMNetClassMapping.getCategoryFromClassName] parses the index back
+  /// out of it (ml-2).
+  static String _classNameForIndex(int index) =>
+      YAMNetClassMapping.indexToClassName[index] ?? 'YAMNet_Class_$index';
+
+  /// Decides which app category to report for a ranked pair of YAMNet
+  /// predictions. Pure and interpreter-free so it can be unit-tested.
+  ///
+  /// Returns [YAMNetClassMapping.categoryUncertain] when either
+  /// - the winning score is below [confidenceThreshold] (ml-3/ml-4), or
+  /// - the winner and the runner-up map to DIFFERENT app categories and
+  ///   their scores are within [ambiguityMargin] of each other, so which
+  ///   one wins is effectively a coin flip.
+  ///
+  /// Otherwise returns the category the winning class maps to. Note that
+  /// [YAMNetClassMapping.getCategoryFromClassName] never itself returns
+  /// 'Uncertain', so an 'Uncertain' return always means a gate fired.
+  @visibleForTesting
+  static String resolveCategory({
+    required String bestClass,
+    required double bestScore,
+    required String secondClass,
+    required double secondScore,
+  }) {
+    if (bestScore < confidenceThreshold) {
+      return YAMNetClassMapping.categoryUncertain;
+    }
+
+    final bestCategory =
+        YAMNetClassMapping.getCategoryFromClassName(bestClass);
+    final secondCategory =
+        YAMNetClassMapping.getCategoryFromClassName(secondClass);
+
+    // Same category => nothing about the outcome is ambiguous. YAMNet's
+    // taxonomy is hierarchical and multi-label, so a parent and a child
+    // class (Vehicle/Car, Music/Piano, Speech/Male speech) routinely
+    // score close together and both land in the same bucket. Gating on
+    // those would discard correct classifications for no benefit.
+    if (bestCategory == secondCategory) {
+      return bestCategory;
+    }
+
+    if (bestScore - secondScore < ambiguityMargin) {
+      return YAMNetClassMapping.categoryUncertain;
+    }
+
+    return bestCategory;
+  }
 
   /// Initialize the TFLite model
   Future<bool> initialize() async {
@@ -116,21 +192,25 @@ class SoundClassificationService {
       // Step 4: Run inference
       _interpreter!.run(input, output);
 
-      // Step 5: Get the top prediction
+      // Step 5: Rank the per-class scores once. The ranking feeds the
+      // top-1 result, the ambiguity margin gate, and the Top-3 debug log,
+      // so it is computed here instead of being re-derived three times.
       final scores = output[0];
-      final maxIndex = _getMaxIndex(scores);
-      final confidence = scores[maxIndex];
+      final ranked = List<int>.generate(scores.length, (i) => i);
+      ranked.sort((a, b) => scores[b].compareTo(scores[a]));
 
-      // Get the official YAMNet class name; the placeholder prefix must be
-      // 'YAMNet_Class_' so getCategoryFromClassName can parse the index (ml-2)
-      final yamnetClassName = YAMNetClassMapping.indexToClassName[maxIndex] ?? 'YAMNet_Class_$maxIndex';
-      
+      final maxIndex = ranked[0];
+      final confidence = scores[maxIndex];
+      final secondIndex = ranked.length > 1 ? ranked[1] : maxIndex;
+      final secondConfidence = scores[secondIndex];
+
+      final yamnetClassName = _classNameForIndex(maxIndex);
+      final secondClassName = _classNameForIndex(secondIndex);
+
       // DEBUG: Log top 3 predictions for debugging
-      final sortedIndices = List<int>.generate(scores.length, (i) => i);
-      sortedIndices.sort((a, b) => scores[b].compareTo(scores[a]));
-      AppLogger.debug('🎵 YAMNet Top 3: #$maxIndex=$yamnetClassName (${(scores[maxIndex] * 100).toStringAsFixed(1)}%), '
-          '#${sortedIndices[1]} (${(scores[sortedIndices[1]] * 100).toStringAsFixed(1)}%), '
-          '#${sortedIndices[2]} (${(scores[sortedIndices[2]] * 100).toStringAsFixed(1)}%)');
+      AppLogger.debug('🎵 YAMNet Top 3: #$maxIndex=$yamnetClassName (${(confidence * 100).toStringAsFixed(1)}%), '
+          '#$secondIndex=$secondClassName (${(secondConfidence * 100).toStringAsFixed(1)}%), '
+          '#${ranked[2]}=${_classNameForIndex(ranked[2])} (${(scores[ranked[2]] * 100).toStringAsFixed(1)}%)');
 
       // Step 6: Check confidence threshold (0.30, project spec).
       // Below-threshold predictions come back as 'Uncertain' so the UI can
@@ -147,8 +227,42 @@ class SoundClassificationService {
         );
       }
 
-      // Step 7: Map YAMNet class to our category
-      final category = YAMNetClassMapping.getCategoryFromClassName(yamnetClassName);
+      // Step 7: Map YAMNet class to our category, applying the top-1/top-2
+      // ambiguity margin gate (field test 12 §4.1).
+      final bestCategory =
+          YAMNetClassMapping.getCategoryFromClassName(yamnetClassName);
+      final secondCategory =
+          YAMNetClassMapping.getCategoryFromClassName(secondClassName);
+      final category = resolveCategory(
+        bestClass: yamnetClassName,
+        bestScore: confidence,
+        secondClass: secondClassName,
+        secondScore: secondConfidence,
+      );
+
+      // Near-tie between two DIFFERENT categories: the winner is arbitrary
+      // and flaps between consecutive windows, so report the same live-only
+      // 'Uncertain' pseudo-category the below-threshold path uses.
+      // isAmbiguous keeps meetsThreshold false, which is what stops the
+      // dashboard save timer persisting a class (ml-4/flow2-6).
+      if (category == YAMNetClassMapping.categoryUncertain) {
+        AppLogger.info(
+            '❓ Near-tie -> Uncertain: $yamnetClassName '
+            '(${(confidence * 100).toStringAsFixed(1)}%, $bestCategory) vs '
+            '$secondClassName '
+            '(${(secondConfidence * 100).toStringAsFixed(1)}%, $secondCategory)'
+            ' - gap ${((confidence - secondConfidence) * 100).toStringAsFixed(1)}pp'
+            ' < ${(ambiguityMargin * 100).toStringAsFixed(0)}pp margin');
+        return ClassificationResult(
+          category: YAMNetClassMapping.categoryUncertain,
+          soundType: YAMNetClassMapping.typeAmbient,
+          confidence: confidence,
+          yamnetClass: yamnetClassName,
+          yamnetClassIndex: maxIndex,
+          isAmbiguous: true,
+        );
+      }
+
       final soundType = YAMNetClassMapping.getSoundType(category);
       
       AppLogger.info('✅ Classified: $category (${(confidence * 100).toStringAsFixed(1)}%) - YAMNet: $yamnetClassName (Class #$maxIndex)');
@@ -251,21 +365,6 @@ class SoundClassificationService {
     return audio.map((sample) => sample / maxAbs).toList();
   }
 
-  /// Get the index of the maximum value in a list
-  int _getMaxIndex(List<double> scores) {
-    int maxIndex = 0;
-    double maxValue = scores[0];
-
-    for (int i = 1; i < scores.length; i++) {
-      if (scores[i] > maxValue) {
-        maxValue = scores[i];
-        maxIndex = i;
-      }
-    }
-
-    return maxIndex;
-  }
-
   /// Dispose the interpreter
   void dispose() {
     _interpreter?.close();
@@ -289,12 +388,20 @@ class ClassificationResult {
   final String yamnetClass;     // Original YAMNet class name
   final int yamnetClassIndex;   // YAMNet class index
 
+  /// True when the top-1/top-2 scores were within
+  /// [SoundClassificationService.ambiguityMargin] of each other AND mapped
+  /// to different categories, so [category] is the live-only 'Uncertain'
+  /// pseudo-category rather than a real prediction. Keeps
+  /// [meetsThreshold] false so the result is never persisted with a class.
+  final bool isAmbiguous;
+
   ClassificationResult({
     required this.category,
     required this.soundType,
     required this.confidence,
     required this.yamnetClass,
     required this.yamnetClassIndex,
+    this.isAmbiguous = false,
   });
 
   /// Get confidence as percentage
@@ -306,8 +413,12 @@ class ClassificationResult {
   /// Get category color
   int get categoryColor => YAMNetClassMapping.getCategoryColor(category);
 
-  /// Check if classification meets confidence threshold
-  bool get meetsThreshold => confidence >= SoundClassificationService.confidenceThreshold;
+  /// Check if the classification is safe to persist as fact: it must clear
+  /// the 0.30 confidence threshold AND not be a near-tie between two
+  /// different categories (ml-3/ml-4 + the ambiguity margin gate).
+  bool get meetsThreshold =>
+      !isAmbiguous &&
+      confidence >= SoundClassificationService.confidenceThreshold;
 
   /// Convert to map for Firebase storage
   Map<String, dynamic> toMap() {

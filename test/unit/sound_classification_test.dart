@@ -140,6 +140,156 @@ void main() {
       expect(natureColor, equals(0xFF4CAF50)); // Green
     });
 
+    // --- Top-1/top-2 ambiguity margin gate (field test 12 §4.1) ---------
+    //
+    // resolveCategory is the pure core of the gate: no TFLite interpreter is
+    // involved, and it takes class NAMES rather than indices so these tests
+    // never have to populate YAMNetClassMapping.indexToClassName (another
+    // test asserts that map is empty when unloaded).
+
+    test('Ambiguity margin constant is a sane fraction of the threshold', () {
+      expect(SoundClassificationService.ambiguityMargin, equals(0.10));
+      expect(SoundClassificationService.ambiguityMargin, greaterThan(0.0));
+      // Must be small enough that it can never swallow a confident winner.
+      expect(
+        SoundClassificationService.ambiguityMargin,
+        lessThan(SoundClassificationService.confidenceThreshold),
+      );
+    });
+
+    test('Clear winner across different categories keeps the winner', () {
+      // Car -> Traffic beats Bird -> Nature by 65pp: not ambiguous.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.85,
+          secondClass: 'Bird',
+          secondScore: 0.20,
+        ),
+        equals(YAMNetClassMapping.categoryTraffic),
+      );
+      // Exactly at the margin still counts as a clear winner (gate is `<`).
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.45,
+          secondClass: 'Bird',
+          secondScore: 0.35,
+        ),
+        equals(YAMNetClassMapping.categoryTraffic),
+      );
+    });
+
+    test('Near-tie across DIFFERENT categories becomes Uncertain', () {
+      // The observed failure: ambient street noise wins by a hair over the
+      // sound actually being measured, and the label flaps between windows.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.42,
+          secondClass: 'Bird',
+          secondScore: 0.38,
+        ),
+        equals(YAMNetClassMapping.categoryUncertain),
+      );
+      // Field test §2.2: Vehicle (Traffic) narrowly beating Motorcycle,
+      // which maps to Tuk-tuk, not Traffic.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Vehicle',
+          bestScore: 0.58,
+          secondClass: 'Motorcycle',
+          secondScore: 0.55,
+        ),
+        equals(YAMNetClassMapping.categoryUncertain),
+      );
+    });
+
+    test('Near-tie within the SAME category keeps that category', () {
+      // YAMNet is multi-label and its taxonomy is hierarchical, so sibling
+      // and parent/child classes score close together constantly. The gate
+      // must not fire on those - the outcome is not in doubt.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.42,
+          secondClass: 'Truck',
+          secondScore: 0.38,
+        ),
+        equals(YAMNetClassMapping.categoryTraffic),
+      );
+      // Identical scores, same category: still not ambiguous.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Music',
+          bestScore: 0.97,
+          secondClass: 'Piano',
+          secondScore: 0.97,
+        ),
+        equals(YAMNetClassMapping.categoryMusic),
+      );
+    });
+
+    test('Below-threshold winner is still Uncertain (ml-3/ml-4 unchanged)', () {
+      // Sub-0.30 stays Uncertain regardless of how large the gap is.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.22,
+          secondClass: 'Bird',
+          secondScore: 0.02,
+        ),
+        equals(YAMNetClassMapping.categoryUncertain),
+      );
+      // ...and regardless of whether the runner-up shares its category.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.29,
+          secondClass: 'Truck',
+          secondScore: 0.28,
+        ),
+        equals(YAMNetClassMapping.categoryUncertain),
+      );
+    });
+
+    test('Ambiguous results are never persisted (meetsThreshold false)', () {
+      // The near-tie result carries a real, above-threshold confidence, so
+      // isAmbiguous - not the confidence - is what keeps it out of Firestore.
+      final ambiguous = ClassificationResult(
+        category: YAMNetClassMapping.categoryUncertain,
+        soundType: YAMNetClassMapping.typeAmbient,
+        confidence: 0.42,
+        yamnetClass: 'Car',
+        yamnetClassIndex: 1,
+        isAmbiguous: true,
+      );
+      expect(ambiguous.confidence,
+          greaterThan(SoundClassificationService.confidenceThreshold));
+      expect(ambiguous.meetsThreshold, isFalse);
+
+      // A confident, unambiguous result is still persistable.
+      final confident = ClassificationResult(
+        category: YAMNetClassMapping.categoryTraffic,
+        soundType: YAMNetClassMapping.typePollution,
+        confidence: 0.85,
+        yamnetClass: 'Car',
+        yamnetClassIndex: 1,
+      );
+      expect(confident.isAmbiguous, isFalse);
+      expect(confident.meetsThreshold, isTrue);
+
+      // Below threshold remains non-persistable (existing behaviour).
+      final lowConfidence = ClassificationResult(
+        category: YAMNetClassMapping.categoryUncertain,
+        soundType: YAMNetClassMapping.typeAmbient,
+        confidence: 0.12,
+        yamnetClass: 'Car',
+        yamnetClassIndex: 1,
+      );
+      expect(lowConfidence.meetsThreshold, isFalse);
+    });
+
     test('Class mapping contains common sound classes', () {
       final mapping = YAMNetClassMapping.classMapping;
 
