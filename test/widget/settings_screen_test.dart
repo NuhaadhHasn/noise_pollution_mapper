@@ -49,6 +49,42 @@ void main() {
       expect(find.text('Anonymize Location'), findsOneWidget);
     });
 
+    testWidgets('Top-3 diagnostic toggle is present and defaults off',
+        (tester) async {
+      await pumpSettings(tester);
+      expect(find.text('Diagnostics'), findsOneWidget);
+      expect(find.text('Show Top-3 Predictions'), findsOneWidget);
+
+      final switchFinder = find.ancestor(
+        of: find.text('Show Top-3 Predictions'),
+        matching: find.byType(Row),
+      );
+      final toggle = tester.widget<Switch>(
+        find.descendant(of: switchFinder.first, matching: find.byType(Switch)),
+      );
+      expect(toggle.value, isFalse);
+    });
+
+    testWidgets('Top-3 diagnostic toggle persists to prefs', (tester) async {
+      await pumpSettings(tester);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('show_classification_debug'), isNull);
+
+      await tester.tap(
+        find.descendant(
+          of: find
+              .ancestor(
+                of: find.text('Show Top-3 Predictions'),
+                matching: find.byType(Row),
+              )
+              .first,
+          matching: find.byType(Switch),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(prefs.getBool('show_classification_debug'), isTrue);
+    });
+
     testWidgets('legacy prefs keys are removed on load', (tester) async {
       SharedPreferences.setMockInitialValues({
         'use_dba': false,

@@ -32,6 +32,7 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
   int _recordingDurationMinutes = 10; // minutes (auto-stop)
   int _saveFrequency = 5; // seconds
   double _dbThreshold = 70.0;
+  bool _showClassificationDebug = false;
 
   @override
   void initState() {
@@ -65,6 +66,8 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
             prefs.getInt('recording_duration_minutes') ?? 10;
         _saveFrequency = prefs.getInt('save_frequency') ?? 5;
         _dbThreshold = prefs.getDouble('db_threshold') ?? 70.0;
+        _showClassificationDebug =
+            prefs.getBool('show_classification_debug') ?? false;
       });
     }
   }
@@ -199,6 +202,36 @@ class _SettingsScreenEnhancedState extends State<SettingsScreenEnhanced> {
               (val) {
                 setState(() => _dbThreshold = val);
                 _saveSetting('db_threshold', val);
+              },
+            ),
+          ]),
+
+          const SizedBox(height: 24),
+
+          // DIAGNOSTICS SECTION (developer aid - default off)
+          _buildSectionHeader('Diagnostics', Icons.bug_report),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'For field testing. Shows the three sound classes the model '
+              'ranked highest for the current 5-second window, so you can '
+              'see what it nearly picked. Does not change what is saved.',
+              style: TextStyle(
+                color: ThemeHelper.getSecondaryTextColor(
+                  context,
+                ).withValues(alpha: 0.8),
+                fontSize: 12,
+              ),
+            ),
+          ),
+          _buildSettingCard([
+            _buildSwitchSetting(
+              'Show Top-3 Predictions',
+              Icons.insights,
+              _showClassificationDebug,
+              (val) {
+                setState(() => _showClassificationDebug = val);
+                _saveSetting('show_classification_debug', val);
               },
             ),
           ]),

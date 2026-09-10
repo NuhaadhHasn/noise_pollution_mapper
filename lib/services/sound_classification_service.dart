@@ -54,6 +54,10 @@ class SoundClassificationService {
   /// unless a different-category class also scores within 10pp of them.
   static const double ambiguityMargin = 0.10;
 
+  /// How many ranked predictions [ClassificationResult.topPredictions]
+  /// carries. Matches the existing Top-3 debug log.
+  static const int topPredictionCount = 3;
+
   /// Classification frequency - every 5 seconds (matches Firebase save frequency)
   static const int classificationIntervalSeconds = 5;
 
@@ -207,10 +211,21 @@ class SoundClassificationService {
       final yamnetClassName = _classNameForIndex(maxIndex);
       final secondClassName = _classNameForIndex(secondIndex);
 
+      // Ranked candidates, highest first. Display-only: they feed the
+      // Top-3 debug log below and the optional in-app Top-3 panel (pref
+      // 'show_classification_debug'). Never persisted to Firestore.
+      final topPredictions = <ClassificationCandidate>[
+        for (final index in ranked.take(topPredictionCount))
+          ClassificationCandidate(
+            classIndex: index,
+            className: _classNameForIndex(index),
+            score: scores[index],
+          ),
+      ];
+
       // DEBUG: Log top 3 predictions for debugging
-      AppLogger.debug('🎵 YAMNet Top 3: #$maxIndex=$yamnetClassName (${(confidence * 100).toStringAsFixed(1)}%), '
-          '#$secondIndex=$secondClassName (${(secondConfidence * 100).toStringAsFixed(1)}%), '
-          '#${ranked[2]}=${_classNameForIndex(ranked[2])} (${(scores[ranked[2]] * 100).toStringAsFixed(1)}%)');
+      final rankedForLog = topPredictions.join(', ');
+      AppLogger.debug('🎵 YAMNet Top 3: $rankedForLog');
 
       // Step 6: Check confidence threshold (0.30, project spec).
       // Below-threshold predictions come back as 'Uncertain' so the UI can
@@ -224,6 +239,7 @@ class SoundClassificationService {
           confidence: confidence,
           yamnetClass: yamnetClassName,
           yamnetClassIndex: maxIndex,
+          topPredictions: topPredictions,
         );
       }
 
@@ -260,6 +276,7 @@ class SoundClassificationService {
           yamnetClass: yamnetClassName,
           yamnetClassIndex: maxIndex,
           isAmbiguous: true,
+          topPredictions: topPredictions,
         );
       }
 
@@ -273,6 +290,7 @@ class SoundClassificationService {
         confidence: confidence,
         yamnetClass: yamnetClassName,
         yamnetClassIndex: maxIndex,
+        topPredictions: topPredictions,
       );
 
     } catch (e) {
@@ -380,6 +398,29 @@ class SoundClassificationService {
   }
 }
 
+/// One ranked YAMNet prediction (class name + raw per-class score).
+///
+/// Display-only. Used by the optional in-app Top-3 debug panel so a field
+/// test can see what the model actually ranked without reading logcat.
+/// Never written to Firestore.
+class ClassificationCandidate {
+  final int classIndex;
+  final String className;
+  final double score;
+
+  const ClassificationCandidate({
+    required this.classIndex,
+    required this.className,
+    required this.score,
+  });
+
+  /// Score as a percentage, e.g. '58.2%'.
+  String get scorePercent => '${(score * 100).toStringAsFixed(1)}%';
+
+  @override
+  String toString() => '#$classIndex=$className ($scorePercent)';
+}
+
 /// Result of sound classification
 class ClassificationResult {
   final String category;        // Custom category (Traffic, Construction, etc.)
@@ -395,6 +436,14 @@ class ClassificationResult {
   /// [meetsThreshold] false so the result is never persisted with a class.
   final bool isAmbiguous;
 
+  /// The top [SoundClassificationService.topPredictionCount] predictions
+  /// for this window, highest score first.
+  ///
+  /// Display-only and nullable so callers that never build it (and the
+  /// unit tests) are unaffected. NOT included in [toMap] - nothing about
+  /// what is persisted changes.
+  final List<ClassificationCandidate>? topPredictions;
+
   ClassificationResult({
     required this.category,
     required this.soundType,
@@ -402,6 +451,7 @@ class ClassificationResult {
     required this.yamnetClass,
     required this.yamnetClassIndex,
     this.isAmbiguous = false,
+    this.topPredictions,
   });
 
   /// Get confidence as percentage

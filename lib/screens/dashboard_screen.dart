@@ -107,6 +107,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   // Sound Classification Results
   ClassificationResult? _currentClassification;
+
+  // Developer diagnostic: show the model's ranked Top-3 under the
+  // classification card. Pref 'show_classification_debug', default false
+  // (Settings > Diagnostics). Display-only - never affects what is saved.
+  bool _showClassificationDebug = false;
   bool _isClassifying = false;
 
   // Prevent concurrent location requests
@@ -217,6 +222,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final prefs = await SharedPreferences.getInstance();
       _highNoiseAlertsEnabled = prefs.getBool('high_noise_alerts') ?? true;
       _alertThresholdDb = prefs.getDouble('db_threshold') ?? 70.0;
+      _showClassificationDebug =
+          prefs.getBool('show_classification_debug') ?? false;
       AppLogger.debug(
         'Alert prefs loaded: enabled=$_highNoiseAlertsEnabled, '
         'threshold=${_alertThresholdDb.toStringAsFixed(0)} dB',
@@ -607,6 +614,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final saveFrequencySeconds =
           (prefs.getInt('save_frequency') ?? 5).clamp(5, 30).toInt();
       AppLogger.debug('Save frequency: ${saveFrequencySeconds}s');
+      // Re-read the diagnostic toggle: this screen stays mounted while the
+      // user visits Settings, so initState's value can be stale.
+      final showDebug =
+          prefs.getBool('show_classification_debug') ?? false;
+      if (mounted && showDebug != _showClassificationDebug) {
+        setState(() => _showClassificationDebug = showDebug);
+      }
       _saveTimer = Timer.periodic(Duration(seconds: saveFrequencySeconds), (
         timer,
       ) {
@@ -1065,6 +1079,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               if (_isRecording && _currentClassification != null)
                 _buildSoundClassificationCard(),
 
+              // Optional Top-3 diagnostic panel (Settings > Diagnostics).
+              // Renders nothing at all when the toggle is off.
+              if (_isRecording && _showClassificationDebug)
+                _buildTopPredictionsPanel(),
+
               SizedBox(
                 height: _isRecording && _currentClassification != null ? 24 : 8,
               ),
@@ -1442,6 +1461,96 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  // Top-3 diagnostic panel - the ranked classes YAMNet actually scored
+  // highest for the current window. Gated on the
+  // 'show_classification_debug' pref (default off) so it costs nothing
+  // for ordinary users; display-only, nothing here is persisted.
+  Widget _buildTopPredictionsPanel() {
+    final candidates = _currentClassification?.topPredictions;
+    if (candidates == null || candidates.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: ThemeHelper.getCardColor(context),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: ThemeHelper.getDividerColor(context),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.insights,
+                  size: 14,
+                  color: ThemeHelper.getSecondaryTextColor(context),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Top 3 model predictions',
+                  style: TextStyle(
+                    color: ThemeHelper.getSecondaryTextColor(context),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            for (var i = 0; i < candidates.length; i++)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 1),
+                child: Row(
+                  children: [
+                    Text(
+                      '${i + 1}.',
+                      style: TextStyle(
+                        color: ThemeHelper.getSecondaryTextColor(context),
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        candidates[i].className,
+                        style: TextStyle(
+                          color: ThemeHelper.getTextColor(context),
+                          fontSize: 12,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      candidates[i].scorePercent,
+                      style: TextStyle(
+                        color: i == 0
+                            ? ThemeHelper.getPrimaryColor(context)
+                            : ThemeHelper.getSecondaryTextColor(context),
+                        fontSize: 12,
+                        fontWeight:
+                            i == 0 ? FontWeight.w700 : FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
