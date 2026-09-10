@@ -1000,6 +1000,28 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     DecibelMeterGauge(currentDb: db, maxDb: 100),
               ),
 
+              const SizedBox(height: 10),
+
+              // Accuracy disclosure (field test 12 §3, findings
+              // settings-6/uiux-1). The dB value comes from one
+              // hardcoded calibration offset, hand-tuned against typical
+              // scenes - there is no reference-SPL calibration and no
+              // per-device profile, so say so where the number is shown.
+              // Full-opacity secondary text so it stays legible in both
+              // light and dark themes.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  'Uncalibrated estimate from your phone microphone — '
+                  'absolute levels vary by device.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: ThemeHelper.getSecondaryTextColor(context),
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+
               const SizedBox(height: 24),
 
               // Location label with loading indicator (CLICKABLE TO REFRESH)

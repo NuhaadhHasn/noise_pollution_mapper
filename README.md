@@ -41,6 +41,30 @@ This app enables government agencies and citizens to:
 
 ---
 
+## 📏 Measurement Accuracy
+
+**Decibel readings are uncalibrated estimates, not metrological measurements.**
+
+Levels come from the phone's own microphone via a single hardcoded calibration
+offset (-10 dB), hand-tuned so that everyday scenes land in plausible ranges
+(quiet room 30-40 dB, normal conversation 60-70 dB, traffic 70-85 dB). There is
+no calibration against a reference sound-level meter and no per-device profile,
+so the same sound will read differently on a different handset. Phone hardware
+also cannot apply professional A/C frequency weighting or fast/slow response
+modes, which is why the app does not offer those controls.
+
+Treat the numbers as **indicative, and comparable only within one device**: use
+them for relative trends and hotspot detection, not as evidence of an absolute
+sound level. The dashboard states this next to the live reading.
+
+Sound categories are best-effort for the same reason. Predictions below 30%
+confidence - and near-ties between two *different* categories, where which one
+wins is arbitrary - are reported as `Uncertain` and are never stored with a
+category. Enable **Settings > Diagnostics > Show Top-3 Predictions** to see
+what the model actually ranked for each 5-second window.
+
+---
+
 ## 🏗️ Tech Stack
 
 - **Framework**: Flutter 3.x (Dart)
