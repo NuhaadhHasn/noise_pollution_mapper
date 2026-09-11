@@ -1368,6 +1368,22 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
+  /// Human-readable reason a near-tie was reported as 'Uncertain'.
+  ///
+  /// Built from the ranked candidates the result already carries, so no
+  /// extra state is needed. Falls back to a generic sentence if the list
+  /// is missing (it is nullable and display-only).
+  String _ambiguityReason(ClassificationResult result) {
+    final ranked = result.topPredictions;
+    if (ranked == null || ranked.length < 2) {
+      return 'Too close to call between the top two sounds';
+    }
+    final best = ranked[0];
+    final second = ranked[1];
+    return 'Too close to call: ${best.className} ${best.scorePercent} '
+        'vs ${second.className} ${second.scorePercent}';
+  }
+
   // Sound Classification Card - Displays detected sound type with icon and confidence
   Widget _buildSoundClassificationCard() {
     if (_currentClassification == null) return const SizedBox.shrink();
@@ -1456,14 +1472,31 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     ),
                     const SizedBox(width: 8),
 
-                    // Confidence
-                    Text(
-                      'Confidence: ${result.confidencePercent}',
-                      style: TextStyle(
-                        color: ThemeHelper.getSecondaryTextColor(context),
-                        fontSize: 12,
+                    // Confidence, or - for a near-tie - the reason the
+                    // category reads 'Uncertain'. Showing the winner's
+                    // score next to 'Uncertain' contradicts itself: the
+                    // number is confidence in the class that was gated,
+                    // not in the label on screen.
+                    if (result.isAmbiguous)
+                      Flexible(
+                        child: Text(
+                          _ambiguityReason(result),
+                          softWrap: true,
+                          style: TextStyle(
+                            color: ThemeHelper.getSecondaryTextColor(context),
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        'Confidence: ${result.confidencePercent}',
+                        style: TextStyle(
+                          color: ThemeHelper.getSecondaryTextColor(context),
+                          fontSize: 12,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ],

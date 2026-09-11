@@ -106,11 +106,25 @@ class SoundClassificationService {
     final secondCategory =
         YAMNetClassMapping.getCategoryFromClassName(secondClass);
 
-    // Same category => nothing about the outcome is ambiguous. YAMNet's
-    // taxonomy is hierarchical and multi-label, so a parent and a child
-    // class (Vehicle/Car, Music/Piano, Speech/Male speech) routinely
-    // score close together and both land in the same bucket. Gating on
-    // those would discard correct classifications for no benefit.
+    // Same category => nothing about the outcome is ambiguous, so the
+    // winner is reported. This exemption is narrower than it may look:
+    // YAMNet's taxonomy is hierarchical and multi-label, but a parent and
+    // its child do NOT reliably share an app category. It only covers
+    // pairs that genuinely land in one bucket - Vehicle/Car (both
+    // Traffic), Music/Piano (both Music), Speech/'Male speech, man
+    // speaking' (both Speech). Gating those would discard correct
+    // classifications for no benefit.
+    //
+    // It does NOT cover Vehicle/Motorcycle: 'Vehicle' maps to Traffic
+    // (yamnet_class_mapping.dart) and 'Motorcycle' maps to Tuk-tuk, so
+    // that parent/child pair is gated like any other cross-category
+    // near-tie. Accepted behavioural consequence: a tuk-tuk or a
+    // motorcycle recorded near a road now often reports 'Uncertain'
+    // rather than 'Tuk-tuk', because those two classes routinely score
+    // within the margin of each other in that environment. That is the
+    // intended outcome - which of the two wins there is a coin flip
+    // (field test 12 §2.2) - but it does mean Tuk-tuk gets reported less
+    // often at the roadside than before this gate existed.
     if (bestCategory == secondCategory) {
       return bestCategory;
     }

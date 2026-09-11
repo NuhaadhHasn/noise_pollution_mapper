@@ -168,7 +168,33 @@ void main() {
         ),
         equals(YAMNetClassMapping.categoryTraffic),
       );
-      // Exactly at the margin still counts as a clear winner (gate is `<`).
+      // A comfortably clear winner (20pp) is never gated. The behaviour
+      // at the 10pp boundary itself is pinned by the next test, where it
+      // turns out to be less exact than `< 0.10` suggests.
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.50,
+          secondClass: 'Bird',
+          secondScore: 0.30,
+        ),
+        equals(YAMNetClassMapping.categoryTraffic),
+      );
+    });
+
+    test('Margin boundary follows double arithmetic, not the literal 0.10',
+        () {
+      // A gap of "exactly 0.10" is not representable as a double, and
+      // which side of `< ambiguityMargin` it falls on depends on the two
+      // operands. Verified in Dart 3.10:
+      //   0.45 - 0.35 == 0.10000000000000003  -> NOT gated
+      //   0.50 - 0.40 == 0.09999999999999998  -> gated
+      // Both pairs are "10 percentage points apart" to a human, so the
+      // boundary is a heuristic and not a contract. Both representative
+      // pairs are asserted here so that asymmetry stays visible instead
+      // of one lucky pair implying the boundary is exact.
+      expect(0.45 - 0.35,
+          greaterThan(SoundClassificationService.ambiguityMargin));
       expect(
         SoundClassificationService.resolveCategory(
           bestClass: 'Car',
@@ -177,6 +203,18 @@ void main() {
           secondScore: 0.35,
         ),
         equals(YAMNetClassMapping.categoryTraffic),
+      );
+
+      expect(0.50 - 0.40,
+          lessThan(SoundClassificationService.ambiguityMargin));
+      expect(
+        SoundClassificationService.resolveCategory(
+          bestClass: 'Car',
+          bestScore: 0.50,
+          secondClass: 'Bird',
+          secondScore: 0.40,
+        ),
+        equals(YAMNetClassMapping.categoryUncertain),
       );
     });
 

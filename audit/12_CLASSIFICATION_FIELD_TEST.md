@@ -56,14 +56,28 @@ noise — and the intended sound never became the top prediction.
 
 ### 2.1 Root cause: the app uses only the top-1 prediction
 
-`lib/services/sound_classification_service.dart:121`
+`lib/services/sound_classification_service.dart:121`, as it stood at
+`59eb1d6` (the ranking is computed once since `b62db64`):
 
 ```dart
 final maxIndex = _getMaxIndex(scores);
 final confidence = scores[maxIndex];
 ```
 
-One 521-way softmax, single `argmax`, no margin check. Consequences:
+A single `argmax` over the raw output vector, with no margin check.
+
+> **Correction (2026-09-11).** An earlier draft of this section called that
+> output "one 521-way softmax". That is wrong. `output[0]` is read raw —
+> there is no softmax, no `exp`, and no normalisation anywhere in `lib/`.
+> YAMNet is an AudioSet **multi-label** classifier: it emits **521
+> independent per-class scores**, each its own logistic output, so they do
+> not sum to 1 and several can legitimately be high at once. This is not a
+> pedantic point — the fix in §4.1 rests on it. Because the scores are not
+> shares of one probability mass, the ambiguity gate has to compare two
+> **absolute** confidences; a relative or ratio margin would have no
+> meaning here.
+
+Consequences:
 
 - In any environment with steady background noise, the top class tends to be
   that background, not the sound of interest.
@@ -128,24 +142,42 @@ and say so anywhere the number is presented as fact.
 
 ## 4. Open issues to fix before the dashboard audit
 
-Ranked by value.
+Ranked by value. **Status as of 2026-09-11:** items 1, 3 and 5 are closed
+(commit SHAs inline); item 4 is decided; items 2 and 6 are still open.
 
-1. **Add a top-1 margin gate (HIGH).** When `scores[top] - scores[second]` is
-   small, the prediction is a coin-flip between the ambient profile and the real
-   source. Either surface `Uncertain` in that case or prefer the highest-scoring
-   class whose category differs from the recent rolling mode. Cheap, and directly
-   addresses every §2.2 misreport.
+1. ✅ **CLOSED — `b62db64`.** *Add a top-1 margin gate (HIGH).* When
+   `scores[top] - scores[second]` is small, the prediction is a coin-flip
+   between the ambient profile and the real source. Implemented as
+   `SoundClassificationService.ambiguityMargin` (0.10, an absolute gap — see
+   the correction in §2.1): a near-tie whose two classes fall in **different**
+   app categories is reported as the live-only `Uncertain` pseudo-category and,
+   exactly like a sub-threshold result, is never persisted with a class.
+   Near-ties inside one category are exempt. See item 4 for the one behaviour
+   change this causes in the field.
 2. **Re-test with clean samples (HIGH).** Replace the train and bird samples;
    rebuild the motorcycle sample without naive looping. Then re-run the 11-sound
    matrix. Until then, 3 of the 4 "failures" are unproven.
-3. **Surface the Top-3 in a debug view (MEDIUM).** The data is already logged.
-   Exposing it behind a developer toggle would make every future field test
-   self-diagnosing instead of requiring `adb logcat`.
-4. **Confirm `Motorcycle` → `Tuk-tuk` is intended (MEDIUM).** A motorcycle is not
-   a three-wheeler. This looks like a deliberate Sri Lanka localisation, but a
-   motorcycle passing by will be reported as a tuk-tuk. Decide and document.
-5. **Document the dB accuracy limitation (MEDIUM).** One honest sentence in the
-   UI or README, per §3.
+3. ✅ **CLOSED — `7512c1f`.** *Surface the Top-3 in a debug view (MEDIUM).*
+   The ranked candidates now travel on `ClassificationResult.topPredictions`
+   and render on the dashboard behind the `show_classification_debug`
+   preference (default off). Display-only — nothing extra is persisted. A
+   field test no longer needs `adb logcat` to see what the model ranked.
+4. ✅ **DECIDED — keep it.** *Confirm `Motorcycle` → `Tuk-tuk` is intended
+   (MEDIUM).* A motorcycle is not a three-wheeler, but the mapping is a
+   deliberate Sri Lanka localisation. The owner chose to keep `Tuk-tuk` with
+   all five of its classes (`Motorcycle`, `Scooter`, `Small engine`,
+   `Auto rickshaw`, `Go-kart`); readings in Firestore already use it.
+
+   **Known side effect of the §4.1 gate — do not file this as a new bug.**
+   `Vehicle` maps to Traffic and `Motorcycle` maps to Tuk-tuk: a parent and
+   its child in *different* app categories. At the roadside those two
+   routinely score within the 10pp margin of each other, so a tuk-tuk or a
+   motorcycle recorded near traffic will now often report **`Uncertain`
+   instead of `Tuk-tuk`**. That is the gate working as designed — which of
+   the two wins in that environment is a coin flip — but it does make
+   `Tuk-tuk` harder to confirm in the field. Test it away from a road.
+5. ✅ **CLOSED — `76947c2`.** *Document the dB accuracy limitation (MEDIUM).*
+   The "uncalibrated estimate" caveat is now disclosed in the app, per §3.
 6. **Calibrate against a reference SPL meter (LOW / optional).** The only way to
    make the numbers defensible. A phone-based reference is not sufficient.
 
