@@ -5,7 +5,9 @@ import '../widgets/classification_guide_widget.dart';
 
 /// Sound Classification Guide Screen
 ///
-/// Displays an interactive guide showing all 17 sound categories
+/// Displays an interactive guide showing every sound category.
+/// The count is derived from [CategoryGuideData.getAllCategories] so it can
+/// never drift out of step with the list it labels.
 /// with examples, descriptions, and YAMNet mapping information.
 class ClassificationGuideScreen extends StatelessWidget {
   const ClassificationGuideScreen({super.key});
@@ -54,6 +56,10 @@ class ClassificationGuideScreen extends StatelessWidget {
 
   /// Build header section with introduction
   Widget _buildHeader(BuildContext context) {
+    // Derived, never hardcoded: the label must always match the list the
+    // guide actually renders (a hardcoded '17' went stale the moment the
+    // Quiet category was added).
+    final categoryCount = CategoryGuideData.getAllCategories().length;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.all(16),
@@ -109,7 +115,7 @@ class ClassificationGuideScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '17 Categories',
+                      '$categoryCount Categories',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.8),
                         fontSize: 14,
@@ -155,7 +161,7 @@ class ClassificationGuideScreen extends StatelessWidget {
               _buildInfoChip(
                 context,
                 Icons.category,
-                '17 Categories',
+                '$categoryCount Categories',
                 Colors.white.withValues(alpha: 0.2),
               ),
             ],

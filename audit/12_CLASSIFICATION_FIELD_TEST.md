@@ -31,11 +31,18 @@ dashboard audit.
 | Train (`qa_train_loop.wav`) | Music | ⚠️ see §2.3 — bad sample |
 | Small AC unit | 45 dB, Traffic | ⚠️ see §2.2 and §3 |
 
-**7 of 11 correct. 8 of the app's 17 categories are now confirmed working**
+**7 of 11 correct. 8 of the app's 18 categories are now confirmed working**
 (Speech, Body Sounds, Music, Religious, Nature, Traffic, plus the below-threshold
 `Uncertain` path and null-persistence). Categories still unconfirmed: Tuk-tuk,
 Construction, Industrial, Market, Domestic, Alarm, Transport, Sports, Weather,
-Office, Other.
+Office, Other, Quiet.
+
+> **Update (2026-09-11).** `Quiet` is new — added in `86c8c35` so a genuinely
+> silent room reads as `Quiet` rather than the uninformative `Other`. Only the
+> YAMNet class `Silence` maps to it; the room-tone classes (`Inside, small
+> room`, etc.), `White noise`, `Static` and `Environmental noise` deliberately
+> stay in `Other`, because "enclosed space" is not "quiet" and a 55 dB room
+> labelled Quiet would be worse than the status quo.
 
 ---
 
