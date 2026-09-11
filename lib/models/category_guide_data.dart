@@ -4,7 +4,7 @@ import '../services/yamnet_class_mapping.dart';
 /// Data model for Sound Classification Guide
 /// Contains information about each sound category for user education
 /// 
-/// NOTE: This includes all 17 categories defined in YAMNetClassMapping
+/// NOTE: This includes all 18 categories defined in YAMNetClassMapping
 class CategoryGuideData {
   final String category;
   final IconData icon;
@@ -22,7 +22,12 @@ class CategoryGuideData {
     required this.yamnetInfo,
   });
 
-  /// Get all category guide data (17 categories total)
+  /// Get all category guide data (18 categories total)
+  ///
+  /// The per-category counts in `yamnetInfo` are the number of
+  /// `YAMNetClassMapping.classMapping` keys that are official AudioSet
+  /// display names (i.e. present in assets/models/yamnet_class_map.csv).
+  /// Recompute them from the mapping after any remap - never hand-edit.
   static List<CategoryGuideData> getAllCategories() {
     return [
       // 1. Traffic - Red
@@ -273,22 +278,39 @@ class CategoryGuideData {
         yamnetInfo: '5 official office and technology classes mapped directly',
       ),
 
-      // 17. Other - Grey
+      // 17. Quiet - Teal
+      CategoryGuideData(
+        category: YAMNetClassMapping.categoryQuiet,
+        icon: Icons.volume_mute,
+        color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryQuiet),
+        examples: [
+          'A genuinely silent room',
+          'Quiet gaps between passing sounds',
+        ],
+        description:
+            'Near-silence. Only true silence lands here: indoor room tone is '
+            'classified as Other, because an enclosed space is not '
+            'necessarily a quiet one.',
+        yamnetInfo: "1 official class ('Silence') mapped directly",
+      ),
+
+      // 18. Other - Grey
       CategoryGuideData(
         category: YAMNetClassMapping.categoryOther,
         icon: Icons.help_outline,
         color: YAMNetClassMapping.getCategoryColor(YAMNetClassMapping.categoryOther),
         examples: [
-          'Silence and background noise',
+          'Background noise, hiss, and hum',
           'Static, white noise, and pink noise',
           'Room tone (indoor/outdoor ambience)',
           'Unclassified sounds',
         ],
         description:
             'Ambient room tone and sounds that do not fit other categories. '
-            'Finger snaps and clapping are classified as Body Sounds.',
+            'Silence is classified as Quiet; finger snaps and clapping are '
+            'classified as Body Sounds.',
         yamnetInfo:
-            '28 official ambience/noise classes mapped directly, plus all unmatched sounds',
+            '27 official ambience/noise classes mapped directly, plus all unmatched sounds',
       ),
     ];
   }

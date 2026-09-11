@@ -2,7 +2,7 @@
 
 /// Maps YAMNet's 521 audio classes to custom pollution categories
 ///
-/// Categories (17 total):
+/// Categories (18 total):
 /// - Traffic: Cars, vehicles, engines, horns
 /// - Tuk-tuk: Three-wheelers (Sri Lankan specific)
 /// - Construction: Drilling, jackhammer, power tools
@@ -20,6 +20,7 @@
 /// - Sports: Gym, swimming, bowling, playground (NEW)
 /// - Weather: Rain, thunder, waves, waterfall (NEW)
 /// - Office: Printer, computer, radio, telephone (NEW)
+/// - Quiet: Silence - a genuinely quiet environment (NEW)
 library;
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -45,6 +46,12 @@ class YAMNetClassMapping {
   static const String categorySports = "Sports";
   static const String categoryWeather = "Weather";
   static const String categoryOffice = "Office";
+
+  /// A genuinely silent environment. Only the official 'Silence' class maps
+  /// here: room tone ('Inside, small room' and friends) means "an enclosed
+  /// space", not "quiet", and stays in [categoryOther] so a 55 dB indoor
+  /// reading is never labelled Quiet.
+  static const String categoryQuiet = "Quiet";
 
   /// Live-display-only pseudo-category for below-threshold classifications.
   /// NEVER persisted to Firestore (see the dashboard save-timer gating).
@@ -611,8 +618,12 @@ class YAMNetClassMapping {
     'Sound effect': categoryOther,
     'Pulse': categoryOther,
 
+    // Quiet - true silence only. The room-tone and noise-floor classes
+    // below stay in Other: they mean "enclosed space" or "noise", not
+    // "quiet", and a 55 dB room labelled Quiet would mislead.
+    'Silence': categoryQuiet,
+
     // Other / Ambient
-    'Silence': categoryOther,
     'White noise': categoryOther,
     'Pink noise': categoryOther,
     'Static': categoryOther,
@@ -650,6 +661,7 @@ class YAMNetClassMapping {
       case categorySports:
       case categoryWeather:
       case categoryOffice:
+      case categoryQuiet:
       case categoryUncertain:
         return typeAmbient;
 
@@ -1168,6 +1180,8 @@ class YAMNetClassMapping {
         return '🌦️';
       case categoryOffice:
         return '💼';
+      case categoryQuiet:
+        return '🔇';
       case categoryUncertain:
         return '❓';
       case categoryOther:
@@ -1211,6 +1225,9 @@ class YAMNetClassMapping {
         return 0xFF039BE5; // Light Blue (weather)
       case categoryOffice:
         return 0xFF5E35B1; // Deep Purple (office)
+      case categoryQuiet:
+        return 0xFF00897B; // Teal (quiet) - calm, and legible on both the
+                           // light and the dark card background
       case categoryUncertain:
         return 0xFF757575; // Dark Grey (uncertain)
       case categoryOther:

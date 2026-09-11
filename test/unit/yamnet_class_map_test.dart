@@ -95,7 +95,7 @@ void main() {
           YAMNetClassMapping.getCategoryFromClassName('Inside, small room'),
           equals('Other'));
       expect(YAMNetClassMapping.getCategoryFromClassName('Silence'),
-          equals('Other'));
+          equals('Quiet'));
       expect(YAMNetClassMapping.getCategoryFromClassName('Basketball bounce'),
           equals('Sports'));
     });

@@ -140,6 +140,70 @@ void main() {
       expect(natureColor, equals(0xFF4CAF50)); // Green
     });
 
+    // --- Quiet category -------------------------------------------------
+
+    test("'Silence' is the only class that maps to Quiet", () {
+      expect(YAMNetClassMapping.categoryQuiet, equals('Quiet'));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Silence'),
+          equals(YAMNetClassMapping.categoryQuiet));
+      // Exactly one classMapping entry moved out of Other.
+      final quietClasses = YAMNetClassMapping.classMapping.entries
+          .where((e) => e.value == YAMNetClassMapping.categoryQuiet)
+          .map((e) => e.key)
+          .toList();
+      expect(quietClasses, equals(['Silence']));
+    });
+
+    test('Quiet is an Ambient category, not Pollution', () {
+      expect(YAMNetClassMapping.getSoundType(YAMNetClassMapping.categoryQuiet),
+          equals(YAMNetClassMapping.typeAmbient));
+      // Analytics filters by the STORED soundClass value (flow3-8), so the
+      // stored-value path has to resolve too or 'Quiet' readings would
+      // vanish from the Ambient filter.
+      expect(YAMNetClassMapping.soundTypeForStoredClass('Quiet'),
+          equals('Ambient'));
+    });
+
+    test('Room tone stays in Other - an enclosed space is not a quiet one',
+        () {
+      // Deliberate: these classes mean "indoors", not "silent". A 55 dB
+      // room-tone reading labelled Quiet would be worse than Other.
+      expect(YAMNetClassMapping.getCategoryFromClassName('Inside, small room'),
+          equals(YAMNetClassMapping.categoryOther));
+      expect(
+          YAMNetClassMapping.getCategoryFromClassName(
+              'Inside, large room or hall'),
+          equals(YAMNetClassMapping.categoryOther));
+      expect(
+          YAMNetClassMapping.getCategoryFromClassName('Inside, public space'),
+          equals(YAMNetClassMapping.categoryOther));
+      // Noise floors are not silence either.
+      expect(YAMNetClassMapping.getCategoryFromClassName('White noise'),
+          equals(YAMNetClassMapping.categoryOther));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Static'),
+          equals(YAMNetClassMapping.categoryOther));
+      expect(YAMNetClassMapping.getCategoryFromClassName('Environmental noise'),
+          equals(YAMNetClassMapping.categoryOther));
+    });
+
+    test('Quiet has its own icon and colour, and is never Uncertain', () {
+      expect(YAMNetClassMapping.getCategoryIcon('Quiet'), equals('🔇'));
+      expect(YAMNetClassMapping.getCategoryColor('Quiet'), equals(0xFF00897B));
+      // Fallback rendering would reuse the Other icon/colour.
+      expect(YAMNetClassMapping.getCategoryIcon('Quiet'),
+          isNot(equals(YAMNetClassMapping.getCategoryIcon('Other'))));
+      expect(YAMNetClassMapping.getCategoryColor('Quiet'),
+          isNot(equals(YAMNetClassMapping.getCategoryColor('Other'))));
+      // ml-3/ml-4: the mapping never produces the live-only pseudo-category.
+      expect(
+        YAMNetClassMapping.classMapping.values
+            .contains(YAMNetClassMapping.categoryUncertain),
+        isFalse,
+      );
+      expect(YAMNetClassMapping.getCategoryFromClassName('Silence'),
+          isNot(equals(YAMNetClassMapping.categoryUncertain)));
+    });
+
     // --- Top-1/top-2 ambiguity margin gate (field test 12 §4.1) ---------
     //
     // resolveCategory is the pure core of the gate: no TFLite interpreter is
