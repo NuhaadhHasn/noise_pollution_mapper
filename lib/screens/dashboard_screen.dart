@@ -15,6 +15,8 @@ import '../utils/theme_helper.dart';
 import '../utils/shared_app_state.dart';
 import '../utils/noise_stats.dart';
 import '../utils/classify_then_save.dart';
+import '../utils/microphone_unavailable_snack_bar.dart';
+import '../utils/no_audio_watchdog.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
 import '../widgets/recording_stop_bar.dart';
@@ -54,6 +56,25 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   final List<double> _audioBuffer = [];
   static const int _targetSampleRate = 16000; // YAMNet requires 16kHz
   static const int _requiredSamples = 15600; // 0.975 seconds at 16kHz
+
+  // Microphone recovery (device QA 2026-10-16, see _startAudioCapture and
+  // _releaseAudioRecorder). _audioRecorder is opened through
+  // _openAudioRecorder, which shares one open between concurrent callers.
+  Future<FlutterSoundRecorder?>? _audioRecorderOpening;
+  final NoAudioWatchdog _audioWatchdog = NoAudioWatchdog();
+  Timer? _audioWatchdogTimer;
+  bool _isRestartingAudio = false;
+  // Completed by the noise meter's first event after it subscribes.
+  Completer<void>? _meterFirstEvent;
+  // Bumped by every start and stop. A start or capture restart compares it
+  // after each await and backs out once its recording has been stopped.
+  int _recordingGeneration = 0;
+  // Bound on every recorder call (open, start, stop, close).
+  static const Duration _recorderCallTimeout = Duration(seconds: 3);
+  // Longest wait for the meter's first event before starting the classifier.
+  static const Duration _meterStartWait = Duration(seconds: 1);
+  // Pause between tearing capture down and starting it again on a restart.
+  static const Duration _captureRestartSettle = Duration(milliseconds: 500);
 
   // Decibel values
   double _currentDb = 0.0;
@@ -209,14 +230,108 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   // Initialize audio recorder for sound classification
   Future<void> _initializeAudioRecorder() async {
-    _audioRecorder = FlutterSoundRecorder();
+    await _openAudioRecorder();
+  }
+
+  /// The open classifier recorder. Opens a fresh [FlutterSoundRecorder]
+  /// when there is none: on first use, or after [_releaseAudioRecorder]
+  /// dropped one. Returns null when it cannot be opened; the next call
+  /// tries again.
+  Future<FlutterSoundRecorder?> _openAudioRecorder() =>
+      _audioRecorderOpening ??= _openFreshAudioRecorder();
+
+  Future<FlutterSoundRecorder?> _openFreshAudioRecorder() async {
+    final recorder = FlutterSoundRecorder();
+    _audioRecorder = recorder;
     try {
-      await _audioRecorder!.openRecorder();
-      AppLogger.info('Audio recorder initialized for classification');
+      await recorder.openRecorder().timeout(_recorderCallTimeout);
     } catch (e) {
       AppLogger.error('Error initializing audio recorder', e);
+      unawaited(_releaseAudioRecorder(recorder));
+      return null;
+    }
+    if (!identical(_audioRecorder, recorder) || _isDisposed) {
+      // Released or disposed while it was opening.
+      unawaited(_releaseAudioRecorder(recorder));
+      return null;
+    }
+    AppLogger.info('Audio recorder initialized for classification');
+    return recorder;
+  }
+
+  /// Stops [recorder], giving up after [_recorderCallTimeout]. Returns false
+  /// when the stop timed out or failed, so the recorder may be wedged.
+  Future<bool> _stopAudioRecorderBounded(
+    FlutterSoundRecorder recorder,
+    String whenTimedOut,
+  ) async {
+    try {
+      await recorder.stopRecorder().timeout(_recorderCallTimeout);
+      return true;
+    } on TimeoutException {
+      AppLogger.warning('⚠️ stopRecorder() timed out, $whenTimedOut');
+      return false;
+    } catch (e) {
+      AppLogger.error('Failed to stop audio recorder', e);
+      return false;
     }
   }
+
+  /// Closes [recorder] to release its native session, and drops it, so
+  /// the next start opens a fresh instance.
+  ///
+  /// Device QA 2026-10-16: stopRecorder() timed out and the app only reset
+  /// its own state. The native session kept the microphone until the app
+  /// was force-stopped. The same instance also stayed "recording" with
+  /// its internal lock held, so the next recording's stop timed out too, its
+  /// start was skipped, and it got no audio. Dropping the instance means no
+  /// later call queues behind the stuck one. The close is bounded. It takes
+  /// effect once the stuck call returns; if that call never returns, only
+  /// the process ending frees that one session, but the app no longer uses it.
+  Future<void> _releaseAudioRecorder(FlutterSoundRecorder recorder) async {
+    if (identical(_audioRecorder, recorder)) {
+      _audioRecorder = null;
+      _audioRecorderOpening = null;
+    }
+    try {
+      await recorder.closeRecorder().timeout(_recorderCallTimeout);
+      AppLogger.info('Audio recorder closed and released');
+    } on TimeoutException {
+      AppLogger.warning(
+        'closeRecorder() timed out; the recorder was dropped and the next '
+        'recording opens a new one',
+      );
+    } catch (e) {
+      AppLogger.error('Failed to close audio recorder', e);
+    }
+  }
+
+  /// Stops [recorder] (bounded), then closes and drops it.
+  Future<void> _tearDownAudioRecorder(FlutterSoundRecorder recorder) async {
+    final stopped = !recorder.isRecording ||
+        await _stopAudioRecorderBounded(recorder, 'releasing the recorder');
+    final release = _releaseAudioRecorder(recorder);
+    // After a stop that timed out, the close only queues behind the stuck
+    // stop on the same instance: do not wait for it.
+    if (stopped) {
+      await release;
+    } else {
+      unawaited(release);
+    }
+  }
+
+  Future<void> _closeAudioStreamController() async {
+    final controller = _audioStreamController;
+    _audioStreamController = null;
+    try {
+      await controller?.close();
+    } catch (e) {
+      AppLogger.error('Failed to close audio stream controller', e);
+    }
+  }
+
+  bool _isCurrentRecording(int generation) =>
+      generation == _recordingGeneration && _isRecording && !_isDisposed;
 
   // Request microphone permission
   Future<void> _requestPermissions() async {
@@ -470,6 +585,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _isRecording = true;
       _hasShownSaveErrorSnackbar = false;
     });
+    final generation = ++_recordingGeneration;
 
     try {
       // flow6-04: pick up any threshold/toggle change made in Settings
@@ -482,148 +598,35 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _saveTimer = null;
       _classificationTimer?.cancel();
       _classificationTimer = null;
+      _audioWatchdogTimer?.cancel();
+      _audioWatchdogTimer = null;
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
       _lastNoiseReadingAt = null;
       _lastClassificationAt = null;
 
-      // CRITICAL: if the audio recorder is somehow still running, stop it
-      // directly. Do NOT call _stopRecording() here - it would reset the
-      // _isRecording flag we just set.
-      if (_audioRecorder != null && _audioRecorder!.isRecording) {
-        AppLogger.warning('Audio recorder already running, stopping first...');
-        try {
-          await _audioRecorder!.stopRecorder().timeout(
-            const Duration(seconds: 3),
-            onTimeout: () {
-              AppLogger.warning('stopRecorder() timed out during restart');
-              return; // Explicit return to satisfy nullable return type
-            },
-          );
-        } catch (e) {
-          AppLogger.error('Failed to stop stale audio recorder', e);
-        }
-      }
-
       // Location already fetched on screen start, no need to request again
 
-      // Start noise meter for dB readings
-      _noiseMeter = NoiseMeter();
-      _noiseSubscription = _noiseMeter?.noise.listen(
-        (NoiseReading reading) {
-          if (!_isRecording || !mounted) return;
-          // dash-6: record stream liveness for the save timer's stall check
-          _lastNoiseReadingAt = DateTime.now();
+      // Start the noise meter (dB readings), then the audio recorder for
+      // sound classification.
+      await _startAudioCapture(generation);
+      // Stopped (Stop bar, tab switch, backgrounding) while capture was
+      // starting: _stopRecording has already torn down and reset the state.
+      if (!_isCurrentRecording(generation)) return;
 
-          // perf-2: no setState here. Values are published through
-          // _currentDbNotifier / _historyVersion so only the gauge, stats
-          // row, and chart subtrees rebuild per reading.
-
-          // Apply calibration offset for phone microphone
-          // Phone mics read 10-20 dB higher than actual SPL
-          // This offset adjusts readings to realistic environmental values:
-          // - Quiet room: 30-40 dB (was showing 10-20 dB)
-          // - Normal conversation: 60-70 dB (was showing 30-50 dB)
-          // - Loud speech: 80-90 dB (was showing 50-60 dB)
-          // - Traffic: 70-85 dB
-          const double calibrationOffset = 10.0;
-          final rawDb = reading.meanDecibel - calibrationOffset;
-
-          // Validate dB range (filter unrealistic values)
-          // Environmental sounds typically range from 20-120 dB
-          if (rawDb < 10 || rawDb > 130) {
-            AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
-            return; // Don't add invalid readings
-          }
-
-          _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
-          _currentDbNotifier.value = _currentDb;
-
-          // Add to history (only valid values)
-          if (_currentDb.isFinite && _currentDb > 0) {
-            _dbHistory.add(_currentDb);
-            if (_dbHistory.length > 100) {
-              _dbHistory.removeAt(0); // Keep last 100 readings
-            }
-
-            // Update min, max, and average
-            if (_currentDb > _maxDb) _maxDb = _currentDb;
-
-            // Set minDb to first reading if still infinity
-            if (_minDb == double.infinity) {
-              _minDb = _currentDb;
-            } else if (_currentDb < _minDb) {
-              _minDb = _currentDb;
-            }
-
-            // dash-1: energy-based average (Leq), not arithmetic dB mean
-            if (_dbHistory.isNotEmpty) {
-              _avgDb = NoiseStats.energyMeanDb(_dbHistory);
-            }
-
-            // perf-2: bump version so stats row + history chart rebuild
-            _historyVersion.value = _historyVersion.value + 1;
-
-            // flow6-04/settings-4: threshold + toggle come from user
-            // settings, not hardcoded values
-            if (_highNoiseAlertsEnabled &&
-                _currentDb > _alertThresholdDb &&
-                !_hasShownHighNoiseAlert) {
-              NotificationService.showHighNoiseAlert(_currentDb);
-              _hasShownHighNoiseAlert =
-                  true; // Only alert once per recording session
-            }
-
-            // Reset alert flag once noise drops 5 dB below the threshold
-            if (_currentDb < _alertThresholdDb - 5) {
-              _hasShownHighNoiseAlert = false;
-            }
-          }
-        },
-        onError: (error) {
-          AppLogger.error('Noise meter stream error', error);
-          // Don't cancel on error - let stream recover
-        },
-        onDone: () {
-          AppLogger.debug('Noise meter stream closed');
-        },
-        cancelOnError: false,
+      // Device QA 2026-10-16: a recorder can report a successful start and
+      // still deliver nothing. Restart capture once if a feed goes silent,
+      // then stop with an error (NoAudioWatchdog has the policy).
+      _audioWatchdog.start(DateTime.now());
+      _audioWatchdogTimer = Timer.periodic(
+        NoAudioWatchdog.checkInterval,
+        (_) => _checkAudioWatchdog(),
       );
-
-      // Start audio recorder for sound classification
-      if (_audioRecorder != null && !_audioRecorder!.isRecording) {
-        _audioBuffer.clear();
-
-        // Create stream controller to receive audio data
-        _audioStreamController = StreamController<Uint8List>();
-        _audioStreamSubscription = _audioStreamController!.stream.listen(
-          (buffer) {
-            if (!_isRecording) return;
-            _processAudioData(buffer);
-          },
-          onError: (error) {
-            AppLogger.error('Audio stream error', error);
-          },
-          onDone: () {
-            AppLogger.debug('Audio stream closed');
-          },
-          cancelOnError: false,
-        );
-
-        // Start recording with stream output
-        await _audioRecorder!.startRecorder(
-          toStream: _audioStreamController!.sink,
-          codec: Codec.pcm16,
-          sampleRate: _targetSampleRate,
-          numChannels: 1, // Mono
-        );
-
-        AppLogger.debug('Started real audio capture at $_targetSampleRate Hz');
-      }
 
       // Start periodic Firebase saves at the user's chosen interval
       // ('save_frequency' pref, 5-30 s, default 5 — settings-6).
       final prefs = await SharedPreferences.getInstance();
+      if (!_isCurrentRecording(generation)) return;
       final saveFrequencySeconds =
           (prefs.getInt('save_frequency') ?? 5).clamp(5, 30).toInt();
       AppLogger.debug('Save frequency: ${saveFrequencySeconds}s');
@@ -750,6 +753,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       });
     } catch (e) {
       AppLogger.error('Error starting recording', e);
+      // Stopped while starting: _stopRecording has already torn this
+      // recording down, and a newer recording may own the state now.
+      if (generation != _recordingGeneration) return;
       // Roll back: tear down anything partially started and clear the flag
       await _noiseSubscription?.cancel();
       _noiseSubscription = null;
@@ -757,8 +763,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _saveTimer = null;
       _classificationTimer?.cancel();
       _classificationTimer = null;
+      _audioWatchdogTimer?.cancel();
+      _audioWatchdogTimer = null;
+      _audioWatchdog.stop();
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
+      await _closeAudioStreamController();
+      _recordingGeneration++;
       if (mounted && !_isDisposed) {
         setState(() {
           _isRecording = false;
@@ -766,11 +777,292 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       } else {
         _isRecording = false;
       }
+      if (e is _AudioCaptureException) _showMicrophoneUnavailable();
     }
+  }
+
+  /// Starts both microphone capture paths for recording [generation]: the
+  /// noise meter first, then the classifier recorder once the meter's
+  /// AudioRecord is running.
+  ///
+  /// Device QA 2026-10-16: started back to back, the two AudioRecords
+  /// (meter 44.1 kHz, classifier 16 kHz) could race in Android's audio
+  /// policy. The classifier's open closed the meter's not-yet-started input,
+  /// so the meter's start failed with status -38 ("dead IAudioRecord") and
+  /// neither path delivered audio. Any meter event proves its AudioRecord
+  /// has started, so waiting for the first one (bounded) keeps the two
+  /// opens apart.
+  ///
+  /// Throws [_AudioCaptureException] if the classifier recorder cannot be
+  /// opened or started.
+  Future<void> _startAudioCapture(int generation) async {
+    if (!_isCurrentRecording(generation)) return;
+    _startNoiseMeter();
+    final firstEvent = _meterFirstEvent;
+    if (firstEvent != null) {
+      await firstEvent.future.timeout(
+        _meterStartWait,
+        onTimeout: () => AppLogger.warning(
+          'No noise meter reading within ${_meterStartWait.inMilliseconds} ms; '
+          'starting the classifier recorder anyway',
+        ),
+      );
+    }
+    if (!_isCurrentRecording(generation)) return;
+    await _startClassifierRecorder(generation);
+  }
+
+  /// Starts the classifier recorder, streaming 16 kHz PCM into
+  /// [_audioBuffer].
+  ///
+  /// Throws [_AudioCaptureException] when the recorder cannot be opened or
+  /// started in time. A recorder that failed to start is released, so the
+  /// next attempt opens a fresh one.
+  Future<void> _startClassifierRecorder(int generation) async {
+    var recorder = await _openAudioRecorder();
+    if (recorder == null) {
+      throw const _AudioCaptureException('the recorder could not be opened');
+    }
+    if (!_isCurrentRecording(generation)) return;
+
+    // CRITICAL: if the audio recorder is somehow still running, stop it
+    // directly. Do NOT call _stopRecording() here - it would reset the
+    // _isRecording flag we just set.
+    if (recorder.isRecording) {
+      AppLogger.warning('Audio recorder already running, stopping first...');
+      if (!await _stopAudioRecorderBounded(recorder, 'during restart')) {
+        // It will not stop, so it is wedged: release it and open a new one.
+        unawaited(_releaseAudioRecorder(recorder));
+        recorder = await _openAudioRecorder();
+        if (recorder == null) {
+          throw const _AudioCaptureException(
+              'the recorder could not be re-opened');
+        }
+      }
+      if (!_isCurrentRecording(generation)) return;
+    }
+
+    _audioBuffer.clear();
+
+    // Create stream controller to receive audio data
+    final controller = StreamController<Uint8List>();
+    _audioStreamController = controller;
+    _audioStreamSubscription = controller.stream.listen(
+      (buffer) {
+        if (!_isRecording) return;
+        _processAudioData(buffer);
+      },
+      onError: (error) {
+        AppLogger.error('Audio stream error', error);
+      },
+      onDone: () {
+        AppLogger.debug('Audio stream closed');
+      },
+      cancelOnError: false,
+    );
+
+    // Start recording with stream output
+    try {
+      await recorder
+          .startRecorder(
+            toStream: controller.sink,
+            codec: Codec.pcm16,
+            sampleRate: _targetSampleRate,
+            numChannels: 1, // Mono
+          )
+          .timeout(_recorderCallTimeout);
+    } catch (e) {
+      AppLogger.error('Failed to start the classifier recorder', e);
+      unawaited(_releaseAudioRecorder(recorder));
+      throw _AudioCaptureException('startRecorder() failed: $e');
+    }
+
+    if (!_isCurrentRecording(generation)) {
+      // Stopped while the recorder was starting. _stopRecording may have
+      // seen it not yet recording and skipped it, so stop it here.
+      if (!await _stopAudioRecorderBounded(
+          recorder, 'after a cancelled start')) {
+        unawaited(_releaseAudioRecorder(recorder));
+      }
+      return;
+    }
+
+    AppLogger.debug('Started real audio capture at $_targetSampleRate Hz');
+  }
+
+  /// Watchdog tick (every [NoAudioWatchdog.checkInterval] while recording).
+  void _checkAudioWatchdog() {
+    if (!_isRecording || !mounted || _isRestartingAudio) return;
+    final now = DateTime.now();
+    final silent =
+        _audioWatchdog.silentFeeds(now).map((f) => f.name).join(' + ');
+    switch (_audioWatchdog.check(now)) {
+      case AudioWatchdogVerdict.healthy:
+        return;
+      case AudioWatchdogVerdict.restart:
+        AppLogger.warning(
+          'No audio from the $silent recorder for '
+          '${_audioWatchdog.timeout.inSeconds} s; restarting audio capture',
+        );
+        _restartAudioCapture();
+      case AudioWatchdogVerdict.fail:
+        AppLogger.error(
+          'Still no audio from the $silent recorder after a restart; '
+          'stopping the recording',
+        );
+        _failRecordingNoAudio();
+    }
+  }
+
+  /// Tears both capture paths down fully, releases the classifier recorder's
+  /// native session, and starts capture again on a freshly opened recorder.
+  Future<void> _restartAudioCapture() async {
+    if (_isRestartingAudio) return;
+    _isRestartingAudio = true;
+    final generation = _recordingGeneration;
+    try {
+      await _noiseSubscription?.cancel();
+      _noiseSubscription = null;
+      await _audioStreamSubscription?.cancel();
+      _audioStreamSubscription = null;
+      await _closeAudioStreamController();
+      _audioBuffer.clear();
+      final recorder = _audioRecorder;
+      if (recorder != null) await _tearDownAudioRecorder(recorder);
+      if (!_isCurrentRecording(generation)) return;
+
+      // Let the old AudioRecords wind down before new ones open.
+      await Future<void>.delayed(_captureRestartSettle);
+      if (!_isCurrentRecording(generation)) return;
+
+      await _startAudioCapture(generation);
+      if (!_isCurrentRecording(generation)) return;
+      _audioWatchdog.restarted(DateTime.now());
+      AppLogger.info('Audio capture restarted');
+    } catch (e) {
+      AppLogger.error('Audio capture restart failed', e);
+      if (_isCurrentRecording(generation)) _failRecordingNoAudio();
+    } finally {
+      _isRestartingAudio = false;
+    }
+  }
+
+  /// Stops the recording cleanly and tells the user the microphone is not
+  /// delivering audio.
+  void _failRecordingNoAudio() {
+    _stopRecording();
+    _showMicrophoneUnavailable();
+  }
+
+  void _showMicrophoneUnavailable() {
+    if (!mounted || _isDisposed) return;
+    showMicrophoneUnavailableSnackBar(context);
+  }
+
+  /// Subscribes to the noise meter (dB readings). [_meterFirstEvent]
+  /// completes on its first event.
+  void _startNoiseMeter() {
+    final firstEvent = Completer<void>();
+    _meterFirstEvent = firstEvent;
+    _noiseMeter = NoiseMeter();
+    _noiseSubscription = _noiseMeter?.noise.listen(
+      (NoiseReading reading) {
+        if (!firstEvent.isCompleted) firstEvent.complete();
+        if (!_isRecording || !mounted) return;
+        // dash-6: record stream liveness for the save timer's stall check.
+        // Device QA 2026-10-16: only a finite reading counts. A dead
+        // AudioRecord keeps delivering zero-filled buffers (-Infinity dB);
+        // counting those let the save timer re-save a frozen _currentDb
+        // and would hide the dead meter from the no-audio watchdog.
+        if (reading.meanDecibel.isFinite) {
+          final now = DateTime.now();
+          _lastNoiseReadingAt = now;
+          _audioWatchdog.audioReceived(AudioFeed.meter, now);
+        }
+
+        // perf-2: no setState here. Values are published through
+        // _currentDbNotifier / _historyVersion so only the gauge, stats
+        // row, and chart subtrees rebuild per reading.
+
+        // Apply calibration offset for phone microphone
+        // Phone mics read 10-20 dB higher than actual SPL
+        // This offset adjusts readings to realistic environmental values:
+        // - Quiet room: 30-40 dB (was showing 10-20 dB)
+        // - Normal conversation: 60-70 dB (was showing 30-50 dB)
+        // - Loud speech: 80-90 dB (was showing 50-60 dB)
+        // - Traffic: 70-85 dB
+        const double calibrationOffset = 10.0;
+        final rawDb = reading.meanDecibel - calibrationOffset;
+
+        // Validate dB range (filter unrealistic values)
+        // Environmental sounds typically range from 20-120 dB
+        if (rawDb < 10 || rawDb > 130) {
+          AppLogger.debug('Filtered unrealistic dB reading: ${rawDb.toStringAsFixed(1)} dB');
+          return; // Don't add invalid readings
+        }
+
+        _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
+        _currentDbNotifier.value = _currentDb;
+
+        // Add to history (only valid values)
+        if (_currentDb.isFinite && _currentDb > 0) {
+          _dbHistory.add(_currentDb);
+          if (_dbHistory.length > 100) {
+            _dbHistory.removeAt(0); // Keep last 100 readings
+          }
+
+          // Update min, max, and average
+          if (_currentDb > _maxDb) _maxDb = _currentDb;
+
+          // Set minDb to first reading if still infinity
+          if (_minDb == double.infinity) {
+            _minDb = _currentDb;
+          } else if (_currentDb < _minDb) {
+            _minDb = _currentDb;
+          }
+
+          // dash-1: energy-based average (Leq), not arithmetic dB mean
+          if (_dbHistory.isNotEmpty) {
+            _avgDb = NoiseStats.energyMeanDb(_dbHistory);
+          }
+
+          // perf-2: bump version so stats row + history chart rebuild
+          _historyVersion.value = _historyVersion.value + 1;
+
+          // flow6-04/settings-4: threshold + toggle come from user
+          // settings, not hardcoded values
+          if (_highNoiseAlertsEnabled &&
+              _currentDb > _alertThresholdDb &&
+              !_hasShownHighNoiseAlert) {
+            NotificationService.showHighNoiseAlert(_currentDb);
+            _hasShownHighNoiseAlert =
+                true; // Only alert once per recording session
+          }
+
+          // Reset alert flag once noise drops 5 dB below the threshold
+          if (_currentDb < _alertThresholdDb - 5) {
+            _hasShownHighNoiseAlert = false;
+          }
+        }
+      },
+      onError: (error) {
+        if (!firstEvent.isCompleted) firstEvent.complete();
+        AppLogger.error('Noise meter stream error', error);
+        // Don't cancel on error - let stream recover
+      },
+      onDone: () {
+        AppLogger.debug('Noise meter stream closed');
+      },
+      cancelOnError: false,
+    );
   }
 
   // Process incoming audio data and buffer it for classification
   void _processAudioData(Uint8List bytes) {
+    if (bytes.length >= 2) {
+      _audioWatchdog.audioReceived(AudioFeed.classifier, DateTime.now());
+    }
+
     // Convert PCM16 bytes to float64 samples (normalized to [-1.0, 1.0])
     for (int i = 0; i < bytes.length - 1; i += 2) {
       // Read 16-bit signed integer (little-endian)
@@ -794,37 +1086,35 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   // Stop noise measurement
   void _stopRecording() async {
+    // Any start or capture restart still in flight backs out at its next
+    // await (it compares this generation).
+    _recordingGeneration++;
     _noiseSubscription?.cancel();
     _audioStreamSubscription?.cancel();
     _saveTimer?.cancel();
     _classificationTimer?.cancel();
     _autoStopTimer?.cancel();
     _autoStopTimer = null;
+    _audioWatchdogTimer?.cancel();
+    _audioWatchdogTimer = null;
+    _audioWatchdog.stop();
 
     // Stop audio recorder with timeout (CRITICAL FIX - prevents hanging)
-    if (_audioRecorder != null && _audioRecorder!.isRecording) {
-      try {
-        await _audioRecorder!.stopRecorder().timeout(
-          const Duration(seconds: 3),
-          onTimeout: () {
-            AppLogger.warning('⚠️ stopRecorder() timed out, forcing state reset');
-            return; // Explicit return to satisfy nullable return type
-          },
-        );
+    final recorder = _audioRecorder;
+    if (recorder != null && recorder.isRecording) {
+      if (await _stopAudioRecorderBounded(
+          recorder, 'forcing state reset and releasing the recorder')) {
         AppLogger.debug('Stopped audio capture');
-      } catch (e) {
-        AppLogger.error('Failed to stop audio recorder', e);
-        // Continue anyway - force state reset
+      } else {
+        // Device QA 2026-10-16: never let the native session outlive the
+        // UI state. Close and drop the recorder; the next start opens a
+        // fresh one instead of queueing behind the stuck stop.
+        unawaited(_releaseAudioRecorder(recorder));
       }
     }
 
     // Close stream controller
-    try {
-      await _audioStreamController?.close();
-    } catch (e) {
-      AppLogger.error('Failed to close audio stream controller', e);
-    }
-    _audioStreamController = null;
+    await _closeAudioStreamController();
 
     _audioBuffer.clear();
 
@@ -934,7 +1224,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     WidgetsBinding.instance.removeObserver(this);
     SharedAppState.currentTabIndex.removeListener(_onShellTabChanged);
     _stopRecording();
-    _audioRecorder?.closeRecorder();
+    final recorder = _audioRecorder;
+    if (recorder != null) unawaited(_releaseAudioRecorder(recorder));
     _currentDbNotifier.dispose();
     _historyVersion.dispose();
     // Don't reset locationDialogShown - it's static and shared across app lifetime
@@ -1679,4 +1970,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       ),
     );
   }
+}
+
+/// The classifier recorder could not be opened or started (see
+/// _DashboardScreenState._startClassifierRecorder).
+class _AudioCaptureException implements Exception {
+  const _AudioCaptureException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'AudioCaptureException: $message';
 }
