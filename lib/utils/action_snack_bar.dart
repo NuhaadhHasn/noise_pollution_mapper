@@ -1,4 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import 'app_logger.dart';
+
+/// Minimum time an action SnackBar stays up while assistive navigation is
+/// reported, so a screen-reader user can still reach the action.
+const Duration assistiveMinimumDuration = Duration(seconds: 8);
 
 /// Shows a SnackBar in place of any SnackBar that is already showing or
 /// queued, and returns its controller.
@@ -12,11 +20,15 @@ import 'package:flutter/material.dart';
 /// This helper:
 /// * clears the current and queued SnackBars first, so the action on screen
 ///   always belongs to the newest event;
-/// * keeps an action SnackBar up only while an assistive technology is
-///   navigating the app ([MediaQuery.accessibleNavigationOf]), because a
-///   screen-reader user needs time to reach the action. Otherwise it times
-///   out after [duration], as the call sites intend. This is the rule
-///   Flutter applied before 3.35.
+/// * always lets the SnackBar time out. When assistive navigation is reported
+///   ([MediaQuery.accessibleNavigationOf]), an action SnackBar stays up for at
+///   least [assistiveMinimumDuration]. Owner decision 2026-10-16: on the
+///   owner's phone an always-on accessibility service (AnyDesk) makes Flutter
+///   report assistive navigation, and a SnackBar that never timed out followed
+///   the user to other tabs and covered the record button;
+/// * backs Flutter's own timer with a fallback that hides the SnackBar if it
+///   is still showing one second after its timeout. The fallback is cancelled
+///   as soon as the SnackBar closes, so it can never hide a newer one.
 ///
 /// [messenger] may be passed when the caller captured it before an async
 /// gap; [context] is still used to read the accessibility setting.
@@ -30,16 +42,31 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showActionSnackBar(
   ScaffoldMessengerState? messenger,
 }) {
   final target = messenger ?? ScaffoldMessenger.of(context);
-  final persist = action != null && MediaQuery.accessibleNavigationOf(context);
+  final assistive = MediaQuery.accessibleNavigationOf(context);
+  final effective =
+      assistive && action != null && duration < assistiveMinimumDuration
+          ? assistiveMinimumDuration
+          : duration;
+  AppLogger.debug('[ActionSnackBar] accessibleNavigation=$assistive '
+      'duration=${effective.inSeconds}s');
+
   target.clearSnackBars();
-  return target.showSnackBar(
+  final controller = target.showSnackBar(
     SnackBar(
       content: content,
       action: action,
-      duration: duration,
-      persist: persist,
+      duration: effective,
+      persist: false,
       backgroundColor: backgroundColor,
       behavior: behavior,
     ),
   );
+
+  final fallback = Timer(effective + const Duration(seconds: 1), () {
+    if (target.mounted) {
+      target.hideCurrentSnackBar(reason: SnackBarClosedReason.timeout);
+    }
+  });
+  controller.closed.then((_) => fallback.cancel());
+  return controller;
 }

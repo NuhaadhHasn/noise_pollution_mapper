@@ -96,7 +96,9 @@ void main() {
     expect(find.text('Deleted A'), findsNothing);
   });
 
-  testWidgets('stays up while a screen reader is navigating', (tester) async {
+  testWidgets(
+      'gives assistive navigation longer, then still times out '
+      '(owner decision 2026-10-16)', (tester) async {
     tester.platformDispatcher.accessibilityFeaturesTestValue =
         const FakeAccessibilityFeatures(accessibleNavigation: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
@@ -109,9 +111,14 @@ void main() {
       action: undo(<String>[], 'A'),
     );
     await tester.pumpAndSettle();
-    await tester.pump(const Duration(seconds: 10));
+    // Past the requested 4 s it is still up: assistive minimum is 8 s.
+    await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
     expect(find.text('Deleted A'), findsOneWidget);
+
+    await tester.pump(assistiveMinimumDuration);
+    await tester.pumpAndSettle();
+    expect(find.text('Deleted A'), findsNothing);
   });
 
   testWidgets('a SnackBar without an action times out even for a screen reader',
