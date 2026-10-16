@@ -482,3 +482,145 @@ Risks kept in view:
 - **Helicopter and crowd:** the two laterals. Check whether they recur.
 - **Chainsaw** (stays Industrial) and **train** (stays Transport).
 - **New: idling or passing road traffic,** for the untested `Engine` risk.
+
+Done the same night; see §7.5.
+
+### 7.5 Session 3 (tuned build) and the dead-recorder incident
+
+- **Build:** debug APK with the §7.4 tuning (`1c7fe0d`: margin 0.18,
+  broad set `{Vehicle, Water, Engine}`). Same phone, room and playback
+  method as §7.1.
+- **Runs:** 16 runs (`log_v4_*.txt` / `res_v4_*.txt` in the QA scratchpad
+  `phone2/`): Jawa ×2, hammer drill ×4, helicopter, crowd, train,
+  chainsaw, road traffic (new), and 5 control runs with nothing playing.
+  Drill runs 1 and 2 produced no windows: the microphone died at
+  recording start (see the incident below). They were repeated after a
+  relaunch as runs 1b and 2b. That leaves 56 windows from 14 runs.
+
+#### Session 3 results
+
+Per 5 s window, as decided on the device. † marks a window logged after
+playback was stopped (its input may still straddle the stop).
+
+| Run | On device | What YAMNet scored |
+|---|---|---|
+| Jawa 350 | **Tuk-tuk**, Traffic, **Tuk-tuk**, Traffic† | Vehicle 0.586 / Motorcycle 0.414 (two levels), 0.586 / 0.332 (three), 0.50 / 0.414; † 0.801 / 0.50 |
+| Jawa 350, run 2 | **Tuk-tuk**, Traffic, **Tuk-tuk**, Traffic† | Vehicle 0.668 / Motorcycle 0.50, 0.738 / 0.332, 0.586 / 0.50; † 0.801 / 0.50 |
+| Hammer drill, run 1b | Construction ×3, Traffic† | Jackhammer 0.50 on top; Jackhammer 0.414 = Engine 0.414 (a broad runner-up does not gate); Engine 0.50 / Tools 0.414 → Construction; † Engine 0.332 |
+| Hammer drill, run 2b | Construction ×2, Uncertain, Uncertain† | Engine 0.414 = Jackhammer 0.414 → Construction; Jackhammer 0.668; Tools 0.586 vs Light engine 0.50 falls inside the 0.10 near-tie gate between two specific classes (Construction vs Industrial), not a margin case |
+| Train | Traffic, Traffic, **Transport**, Uncertain (low)† | The approach is Emergency vehicle 0.414 / Siren, as in §7.1; Vehicle 0.668 / Rail transport 0.332 (four levels); Vehicle 0.918 = Rail transport 0.918 → Transport |
+| Chainsaw | Industrial ×3, Uncertain (low)† | Light engine / Chainsaw 0.85–0.92, Engine third (0.74–0.85). Engine never led |
+| Road traffic (new) | Traffic ×3, Uncertain (low)† | Vehicle 0.50–0.738 with Engine 0.26–0.41, Accelerating 0.33–0.41 (Traffic) and Aircraft 0.262 |
+| Helicopter | Traffic, Traffic, **Transport**, Uncertain (low)† | Vehicle 0.668 and 0.414 with nothing specific over 0.15; then Vehicle 0.414 / Helicopter 0.332 → Transport |
+| Crowd | **Transport**, Uncertain (low), Speech, Uncertain (low)† | First window Vehicle 0.50 = Subway, metro, underground 0.50, Rail transport 0.414 |
+| Control 1 | Traffic ×2, **Transport**, Uncertain (low) | Vehicle 0.586 and 0.414; **W3 Vehicle 0.414 = Rail transport 0.414 = Train 0.414** |
+| Control 2 | Uncertain (low) ×4 | Nothing over 0.262 |
+| Control 3 | Traffic, Uncertain (low) ×3 | Engine 0.332 (Traffic), then nothing over 0.262 |
+| Control 4 | Uncertain, Uncertain (low) ×3 | Steam 0.852 vs Hiss 0.801 (near-tie), Steam whistle 0.586 third |
+| Control 5 | Uncertain (low) ×2, Traffic, Uncertain (low) | Vehicle 0.332 at most |
+
+Against the §7.4 re-test list:
+
+- **Jawa: pass, 4 of 6** in-playback windows read Tuk-tuk. The two
+  Traffic windows had Motorcycle three and five levels below Vehicle,
+  outside the margin by design.
+- **Hammer drill: pass, 5 of 6** in-playback windows read Construction.
+  Two needed the tuning: Engine 0.50 / Tools 0.414, and Engine 0.414 =
+  Jackhammer 0.414. The sixth is a near-tie between two specific classes.
+- **Train, chainsaw, road traffic: pass.** Train reaches Transport where
+  Rail transport is level with Vehicle. Chainsaw stays Industrial. Road
+  traffic stays Traffic, but `Engine` never led a road window, so the
+  Industrial-flip risk from §7.4 is still unexercised.
+- **Helicopter lateral: did not recur.** Motorcycle stayed at 0.148 or
+  below. The run instead gave a true detection, Helicopter 0.332 under
+  Vehicle 0.414 → Transport.
+- **Crowd lateral: recurred** (Subway 0.50 = Vehicle 0.50 → Transport).
+  The same sample's first window did this in §7.1 too. Subway and Rail
+  transport both rank, so it is probably station-like rumble in the
+  recording itself, not a rule artefact.
+- **Control: 1 false flip in 20 windows.** No window logged after
+  playback stopped flipped either.
+
+#### The control flip
+
+Control 1, window 3: `Vehicle 0.414 = Rail transport 0.414 = Train
+0.414`, reported as Transport. It is an **exact tie**, so it fires at any
+margin, 0.15 included: the §7.4 tuning did not cause it, and §7.4's
+"revert to 0.15" fallback would not remove it. It may also be genuine
+distant rail. Matale has a railway line, both rail classes rank level, and
+Rail transport scored 0.33–0.41 in this room before (§7.1's control:
+Vehicle 0.738 / Rail transport 0.332).
+
+#### Decision
+
+**Keep margin 0.18 and the broad set `{Vehicle, Water, Engine}`.** Record
+the residual: a low-confidence exact tie between `Vehicle` and a specific
+class can promote in a quiet room, as here at 0.414.
+
+Rejected alternative: require the promoted specific class to score
+**≥ 0.50**. It would remove this flip, but also 5 of the session's 17
+correct in-playback windows (about a third): the two 0.414 Jawa windows,
+the two 0.414 drill windows and the 0.332 helicopter window. That is 5 of
+the 8 windows the rule itself won correctly (6 if the floor also covered
+drill 1b's Jackhammer 0.414 = Engine 0.414). It would keep the crowd
+lateral, which promotes at 0.50.
+
+#### Other observations
+
+- **`Steam whistle` maps to Transport.** Control 4 opened with Steam
+  0.852 / Hiss 0.801 / Steam whistle 0.586 from something in the room,
+  and the near-tie gate made it Uncertain. A kitchen kettle's whistle
+  would read **Transport** if `Steam whistle` ranked first. (`Whistle`
+  itself maps to Other.) No change made; note it for the next mapping
+  review.
+- **The room was quieter than in §7.1.** Vehicle reached 0.586 at most in
+  the controls (0.74–0.80 in §7.1).
+
+#### Microphone incident (drill runs 1–2) and its fix
+
+Seen once in about 45 recordings across the three sessions:
+
+1. At recording start, an AudioRecord `start()` returned status **-38**
+   ("dead IAudioRecord"). Logcat places it on the **noise meter's**
+   44.1 kHz recorder (audio_streamer thread, port 2292). The classifier's
+   16 kHz open arrived between the meter's open and its start. The audio
+   policy closed the meter's still-idle input (742) and opened a new one
+   (750) for the classifier. The meter's start then found no input.
+2. Every start call still reported success. The meter delivered only
+   zero-filled buffers (about 85 -Infinity dB readings a second, all
+   filtered), and the classifier received 0 samples: `Waiting for audio
+   buffer... (0/15600 samples)` every 5 s.
+3. On Stop, `stopRecorder()` never completed. After 3 s the app reset
+   its own state, but the native session stayed active until the app was
+   force-stopped.
+4. The flutter_sound instance stayed "recording" with its internal lock
+   held. The next recording's `stopRecorder() timed out during restart`,
+   its classifier start was skipped, and it got no audio either.
+5. The user saw no error at any point. No reading was saved, only because
+   both runs were shorter than the 30 s save interval: the dead meter's
+   -Infinity events counted as stream liveness, so the stall guard would
+   have let a frozen dB value through.
+
+Fixed in `0b0c302` (Dashboard; policy in `lib/utils/no_audio_watchdog.dart`):
+
+- **Start order.** The meter starts first. The classifier recorder opens
+  only after the meter's first event, or after 1 s at most, so the two
+  opens no longer race.
+- **No-audio watchdog**, checked every 1 s. The trigger is no classifier
+  samples, or no finite meter reading, for **7 s**: more than one 5 s
+  classify tick, less than two. Capture is then torn down fully: the
+  recorder is stopped (bounded), closed and dropped, and after 500 ms
+  capture restarts meter-first on a freshly opened recorder. **One
+  restart per recording.** If a feed is still silent 7 s later, the
+  recording stops cleanly with "Microphone unavailable — please try
+  again" in the theme's error colour.
+- **Stop timeout releases the recorder.** It is closed and dropped. The
+  next start opens a new instance and no longer queues behind the stuck
+  call. Open, start, stop and close are all bounded at 3 s. If the stuck
+  native call never returns, that one session is only freed when the
+  process ends, but the app no longer uses it.
+- **Stall guard.** Only finite meter readings count as liveness.
+- **Verify on the phone.** A normal recording still works. After Stop,
+  `adb shell dumpsys audio` lists no active recording from the app. A
+  second recording starts cleanly. The -38 race itself cannot be
+  triggered on demand.
