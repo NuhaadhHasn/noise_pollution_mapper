@@ -20,9 +20,8 @@ rules_version = '2';
 // the dashboard's own DEPLOYMENT_GUIDE.md:232 documents the broader
 // signed-in read, contradicting its own firestore.rules).
 //
-// Anything reached through the Admin SDK — the dashboard's Cloud Functions
-// (functions/src/cache-export.ts) and its service-account scripts
-// (scripts/export-cache.js, scripts/export-cache-to-firestore.js) — BYPASSES
+// Anything reached through the Admin SDK — Cloud Functions, the dashboard's
+// service-account scripts under scripts/, the Firebase console — BYPASSES
 // these rules entirely and therefore gets NO grant here.
 // =============================================================================
 
@@ -41,35 +40,16 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // DASHBOARD-only admin definition. Kept as a users/{uid}.role document
-    // lookup because that is the admin concept the dashboard already ships
-    // (its firestore.rules), and because nothing in either codebase sets a
-    // custom auth claim, so a claim-based check would grant admin to nobody.
-    //
-    // COST: each evaluation costs document accesses against
-    // users/{caller uid}. It is deliberately called ONLY on the cross-user
-    // users read below — never on noise_readings — so ordinary app traffic
-    // and every owner-scoped read pay nothing for it (the `||` short-circuits
-    // on isOwner first).
-    //
-    // `.get('role', '')` is used instead of `.data.role` so a profile document
-    // with no role field (every document the app creates) evaluates to false
-    // rather than erroring. exists() guards the case where an admin account was
-    // created straight in the Firebase console and has no users document.
-    // OPERATIONAL REQUIREMENT (adversarial review, 2026-09-09): no code in
-    // EITHER repo ever writes a `role` field, so before 2026-09-09 this
-    // predicate was unsatisfiable for every account in existence and the
-    // dashboard's /analytics page (which calls fetchAllUsers() unconditionally)
-    // was silently dead. Admin is therefore provisioned MANUALLY: set
-    // users/{uid}.role = 'admin' on the accounts that need it. Done for the
-    // project owner's own uid. If you add an admin, set that field or their
-    // dashboard analytics will fail with permission-denied and no other symptom.
-    function isAdmin() {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid))
-             .data.get('role', '') == 'admin';
-    }
+    // NO admin helper, by design (dashboard audit priv-2). The dashboard's
+    // admin concept is users/{uid}.role == 'admin', provisioned MANUALLY in
+    // the Firebase console or with the Admin SDK (no code in either repo
+    // writes `role`). The dashboard's access gate reads it with an owner get
+    // of the signed-in user's OWN profile, which the users read rule below
+    // already allows. No rule grants anything on the strength of the role:
+    // the one grant it used to unlock, listing every users profile (raw
+    // registration emails), is gone. The users create/update guards that
+    // forbid self-assigning `role` are what keep that dashboard gate honest.
+    // Never loosen them.
 
     // -------------------------------------------------------------------------
     // noise_readings — the shared community collection
@@ -219,24 +199,23 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /users/{userId} {
 
-      // READ: owner, or an admin.
-      //   APP (owner get): profile_sync_service.dart:43.
-      //   DASHBOARD (admin cross-user LIST): src/services/userService.ts
-      //      fetchAllUsers() does getDocs(collection(db,'users')) with no
-      //      filter, called from src/pages/AnalyticsPage.tsx:27 to label rows
-      //      with author emails. THIS is the dashboard admin feature that the
-      //      app-only ruleset broke (it has no admin clause), so the clause is
-      //      merged in here — and nowhere else.
-      // List semantics: an unfiltered list is allowed only when the condition
-      // holds without inspecting resource, i.e. only for admins. A non-admin
-      // still gets their own document by id via isOwner and cannot list the
-      // collection. Ordinary owner reads never trigger the isAdmin() lookup.
-      allow read: if isOwner(userId) || isAdmin();
+      // READ: owner only.
+      //   APP (owner get): profile_sync_service.dart, email reconciliation.
+      //   DASHBOARD (owner get): the signed-in user's OWN profile, read for
+      //      its manually provisioned `role` by the dashboard access gate.
+      // Profiles hold the RAW registration email, so no client may list the
+      // collection or read another user's profile, an admin included
+      // (dashboard audit priv-2: the old admin list joined raw emails to
+      // exact GPS in the analytics table and CSV export). Admin-side needs
+      // go through the console or the Admin SDK; the dashboard labels
+      // readings with the masked `userEmail` each reading already carries.
+      allow read: if isOwner(userId);
 
       // CREATE: owner only — APP registration (registration_screen.dart:58).
       // `role` may never be self-assigned: without this guard, any user could
-      // write role:'admin' into their own profile and unlock the cross-user
-      // read above. Admin must be granted out-of-band (console / Admin SDK).
+      // write role:'admin' into their own profile and pass the dashboard's
+      // admin gate, which reads the signed-in user's own role. Admin must be
+      // granted out-of-band (console / Admin SDK).
       allow create: if isOwner(userId)
         && !('role' in request.resource.data);
 
