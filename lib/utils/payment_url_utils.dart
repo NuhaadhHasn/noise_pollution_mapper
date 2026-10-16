@@ -55,6 +55,10 @@ class PaymentUrlUtils {
   /// When [hostedButtonId] is non-empty (a Donate button the owner created
   /// at paypal.com/donate/buttons), it is sent INSTEAD of `business`.
   /// PayPal takes one or the other. The button carries its own item name.
+  /// `cmd=_donations` is sent only with `business`: alongside
+  /// `hosted_button_id` it switches PayPal to the legacy flow, which ignores
+  /// the button and fails with webscrErrorCode NO_BUSINESS (live-tested
+  /// 2026-10-17).
   /// Uri.queryParameters percent-encodes the business email.
   static String buildPayPalDonationUrl({
     required String business,
@@ -70,7 +74,7 @@ class PaymentUrlUtils {
       host: host,
       path: '/donate/',
       queryParameters: <String, String>{
-        'cmd': '_donations',
+        if (!hosted) 'cmd': '_donations',
         if (hosted) 'hosted_button_id': hostedButtonId,
         if (!hosted) 'business': business,
         if (!hosted) 'item_name': 'Donation to Noise Pollution Mapper',

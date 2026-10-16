@@ -99,6 +99,11 @@ void main() {
       expect(uri.path, '/donate/');
       expect(uri.queryParameters['hosted_button_id'], 'ABCDEF123456');
       expect(uri.queryParameters.containsKey('business'), isFalse);
+      // cmd=_donations would make PayPal ignore the button (NO_BUSINESS).
+      expect(uri.queryParameters.containsKey('cmd'), isFalse);
+      expect(uri.queryParameters['amount'], '5.00');
+      expect(uri.queryParameters['currency_code'], 'USD');
+      expect(uri.queryParameters['rm'], '0');
       expect(uri.queryParameters['return'], PaymentUrlUtils.returnUrl);
       expect(uri.queryParameters['cancel_return'],
           PaymentUrlUtils.cancelReturnUrl);
