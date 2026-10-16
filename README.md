@@ -1,47 +1,33 @@
-# 🔊 Noise Mapper
+# Noise Mapper
 
-**Urban Noise Pollution Monitoring System with AI Sound Classification**
+**Community noise-pollution mapping with on-device AI sound classification.**
 
-A Flutter-based mobile application designed for the Sri Lankan government to monitor and analyze urban noise pollution through community-driven data collection.
+A Flutter app for measuring urban noise with a phone, recognising what is making
+it, and sharing the readings on a community map. Built as a final-year academic
+project (CIS6035) by Nuhaadh Hassan, with Sri Lankan cities in mind.
 
----
+## Features
 
-## 📱 About the Project
+- **Noise measurement.** Live sound level in dB from the phone's microphone,
+  saved with GPS coordinates and a place name.
+- **On-device sound classification.** The YAMNet TensorFlow Lite model labels
+  each 5-second window. Readings are grouped into 17 pollution categories
+  (Traffic, Tuk-tuk, Construction, Industrial, Speech, Music, Religious, Market,
+  Nature, Domestic, Alarm and others) plus Quiet. Low-confidence or ambiguous
+  windows are reported as Uncertain and are never stored with a category. A
+  built-in guide explains the categories.
+- **Community map.** Colour-coded markers with clustering, a heatmap, and
+  community feed and search views of what others have recorded.
+- **Analytics.** Charts and statistics by time, noise band and sound category.
+- **History and export.** Your recordings, with delete and Undo, and CSV export.
+- **Offline first.** Readings recorded without a connection are queued and
+  synced later.
+- **Alerts and themes.** An optional high-noise alert with a configurable
+  threshold, and light and dark themes with eight accent colours.
+- **Optional donations.** Display settings come from Firestore, never from the
+  app bundle.
 
-**Developer:** Nuhaadh Hassan (20230670, KD/BSCSD/20/74)
-**Institution:** Final Year Academic Project (CIS6035)
-**Timeline:** 3 months development (2025-2026)
-**Status:** ✅ Complete - All 14 bugs fixed, ready for testing & documentation
-
-### Key Features
-
-- **Real-time Noise Measurement**: Capture and analyze environmental sound levels (dB)
-- **AI Sound Classification**: Powered by YAMNet TensorFlow Lite model
-  - 10 sound categories: Traffic, Tuk-tuk, Music, Speech, Construction, Nature, Animals, Sirens, Machinery, Other
-  - Pollution vs Ambient classification
-  - Real-time confidence scores
-- **GPS Location Tracking**: Automatic geocoding of noise measurements
-- **Community Map**: Interactive map with color-coded noise level markers
-- **Analytics Dashboard**: Charts, statistics, and sound type breakdowns
-- **History & Export**: CSV export with classification data
-- **Firebase Integration**: Authentication, cloud storage, and real-time sync
-- **Dark Mode & Themes**: 8 customizable theme colors with dark/light mode support
-- **Local Notifications**: High noise level alerts at 70dB threshold
-
----
-
-## 🎯 Project Purpose
-
-This app enables government agencies and citizens to:
-- Monitor urban noise pollution in real-time
-- Identify noise pollution hotspots
-- Classify sound sources (traffic, construction, etc.)
-- Generate community-driven noise maps
-- Export data for environmental analysis
-
----
-
-## 📏 Measurement Accuracy
+## Measurement accuracy
 
 **Decibel readings are uncalibrated estimates, not metrological measurements.**
 
@@ -58,235 +44,122 @@ them for relative trends and hotspot detection, not as evidence of an absolute
 sound level. The dashboard states this next to the live reading.
 
 Sound categories are best-effort for the same reason. Predictions below 30%
-confidence - and near-ties between two *different* categories, where which one
-wins is arbitrary - are reported as `Uncertain` and are never stored with a
-category. Enable **Settings > Diagnostics > Show Top-3 Predictions** to see
-what the model actually ranked for each 5-second window.
+confidence, and near-ties between two different categories where which one wins
+is arbitrary, are reported as `Uncertain`. Enable **Settings > Diagnostics >
+Show Top-3 Predictions** to see what the model ranked for each window.
 
----
+## Privacy
 
-## 🏗️ Tech Stack
+- Readings are shared with other signed-in users on the community map. Each
+  reading carries the exact GPS position and time, so only record where you are
+  comfortable being located.
+- Your email address is never written to the shared readings. They carry a
+  masked author label (or your display name) instead, and your profile document
+  is readable only by you.
+- Deleting your account anonymises your readings and deletes the sign-in.
+- Firestore security rules validate every write (field types, ranges and keys) and
+  only let you change your own data. They live in `firestore.rules` and are
+  tested against the Firestore emulator.
+- The app bundles no secrets. Firebase client config is public by design;
+  see `docs/SECURITY_ROTATION.md` for the key-restriction runbook.
 
-- **Framework**: Flutter 3.x (Dart)
-- **AI/ML**: TensorFlow Lite (YAMNet model)
-- **Backend**: Firebase (Auth, Firestore, Cloud Storage)
-- **State Management**: Provider & ValueNotifier
-- **Audio Processing**: flutter_sound, noise_meter packages
-- **Maps**: flutter_map (OpenStreetMap)
-- **Local Storage**: shared_preferences
-- **Testing**: 120+ test cases (unit, widget, integration)
+## Tech stack
 
----
+- Flutter and Dart (SDK `^3.10.3`)
+- TensorFlow Lite with the YAMNet model (`tflite_flutter`)
+- Firebase Auth and Cloud Firestore
+- `noise_meter` and `flutter_sound` for audio, `geolocator` and `geocoding` for
+  location
+- `flutter_map` with OpenStreetMap tiles and marker clustering, `fl_chart` for
+  charts
+- `provider` and `ValueNotifier` for state; `hive` and `shared_preferences` for
+  local storage
 
-## 📦 Installation
+## Setup
 
-### Prerequisites
+Prerequisites: the Flutter SDK, Android Studio or VS Code, and an Android
+device or emulator. Android is the tested platform; iOS is configured but not
+extensively tested; there is no web build because the app needs the microphone.
 
-- Flutter SDK 3.x or higher
-- Android Studio / VS Code
-- Android device/emulator (Android 7.0+)
-- Firebase project setup
-
-### Setup Steps
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd noise_pollution_mapper
-   ```
-
-2. **Install dependencies**
-   ```bash
-   flutter pub get
-   ```
-
-3. **Configuration** — no `.env` file is used. Firebase client config is
-   generated in `lib/firebase_options.dart` (via `flutterfire configure`).
-   Donation display config is served from the Firestore document
-   `app_config/donations` (fields: `paypalBusinessEmail`, `paypalSandboxMode`,
-   `buyMeACoffeeUrl`). Secrets are never bundled with the app
-   (see `docs/SECURITY_ROTATION.md`).
-
-4. **Run the app**
-   ```bash
-   flutter run
-   ```
-
-5. **Build APK** (for distribution)
-   ```bash
-   flutter build apk --release
-   ```
-
----
-
-## 🧪 Testing
-
-### Run Automated Tests
 ```bash
-# All tests
-flutter test
-
-# Unit tests only
-flutter test test/unit/
-
-# Widget tests only
-flutter test test/widget/
-
-# Integration tests (requires device)
-flutter test integration_test/
+git clone https://github.com/NuhaadhHasn/noise_pollution_mapper.git
+cd noise_pollution_mapper
+flutter pub get
+flutter run
 ```
 
-### Manual Testing
-See `TESTING_GUIDE.md` for comprehensive testing checklist covering:
-- All 12 screens
-- AI sound classification
-- Map and analytics features
-- Settings and account management
-- Bug fix verification tests
+No `.env` file is used. Firebase client config is generated in
+`lib/firebase_options.dart` and `android/app/google-services.json` with
+`flutterfire configure`; to run against your own project, register your own
+Firebase app and regenerate them. Donation display config is read from the
+Firestore document `app_config/donations` (`paypalBusinessEmail`,
+`paypalSandboxMode`, `buyMeACoffeeUrl`).
 
----
+Build a release APK with `flutter build apk --release`. It must be signed with
+your own release keystore; see `docs/SECURITY_ROTATION.md` for the release
+verification steps.
 
-## 📂 Project Structure
+## Testing
+
+```bash
+flutter analyze
+flutter test                # unit and widget tests, including a flow test
+flutter test test/unit/     # unit tests only
+flutter test test/widget/   # widget tests only
+```
+
+Tests cover classification gating, CSV export, offline queueing, privacy of
+writes, analytics bucketing, Undo and snackbar behaviour, and the main screens.
+The model itself needs real audio, so classification quality is checked on a
+device; see `audit/12_CLASSIFICATION_FIELD_TEST.md`.
+
+## Firebase rules and indexes
+
+The security rules in `firestore.rules` and the one composite index in
+`firestore.indexes.json` (`noise_readings`: `userId` ascending, `timestamp`
+descending) are the source of truth for the whole project, including the web
+dashboard. The project has no Storage bucket. Deploy only with an explicit
+target list, after reviewing the diff:
+
+```bash
+firebase deploy --only firestore:rules,firestore:indexes
+```
+
+Never run a bare `firebase deploy` or `--only storage`.
+
+## Project structure
 
 ```
 lib/
-├── main.dart                    # App entry point
-├── firebase_options.dart        # Firebase configuration
-├── screens/                     # All 12 app screens
-│   ├── splash_screen.dart
-│   ├── onboarding_screen.dart
-│   ├── login_screen.dart
-│   ├── registration_screen.dart
-│   ├── dashboard_screen.dart    # Main recording screen
-│   ├── map_view_screen.dart     # Interactive map
-│   ├── analytics_screen.dart    # Charts & statistics
-│   ├── history_screen.dart      # Recording history + CSV export
-│   ├── settings_screen_enhanced.dart
-│   ├── report_noise_screen.dart
-│   ├── search_list_screen.dart
-│   └── community_feed_screen.dart
-├── services/
-│   ├── firebase_service.dart    # Firestore operations
-│   ├── notification_service.dart
-│   ├── sound_classification_service.dart  # ML inference
-│   └── yamnet_class_mapping.dart          # Sound categories
-├── widgets/                     # Reusable UI components
-├── utils/
-│   ├── app_logger.dart          # Logging utility
-│   └── animations.dart          # Custom animations
-└── theme/
-    └── app_theme.dart           # Theme system
+  main.dart                  App entry point
+  firebase_options.dart      Generated Firebase config
+  models/                    Data models
+  screens/                   Dashboard (recording), map, analytics, history,
+                             community feed, search, settings, profile, auth,
+                             onboarding, classification guide, donation
+  services/                  Firestore, offline sync, classification (YAMNet),
+                             notifications, heatmap, profile sync
+  utils/                     CSV builder, stats, logger, snackbars, theme helper
+  widgets/                   Reusable UI (gauge, nav bar, stop bar, charts)
+  theme/                     App theme
+assets/models/               YAMNet model and class map
+test/                        Unit, widget and flow tests
+docs/                        Security and key rotation runbook
+audit/                       Audit reports and the fix playbook
 ```
 
----
+## Status
 
-## 🔑 Key Files
+Feature complete and audited. The full end-to-end audit (see `audit/`) was
+fixed and shipped, and the app has been checked on a physical Android phone.
+Classification accuracy with clean field samples is still being evaluated.
 
-- **`CLAUDE.md`**: Development context and session history
-- **`BUG_FIXES_SESSION_15.md`**: Complete bug tracking (all 14 bugs fixed)
-- **`TESTING_GUIDE.md`**: Comprehensive testing instructions
-- **`PRODUCTION_CHECKLIST.md`**: Production readiness checklist
-- **`HOW_TO_FIND_FIREBASE_VALUES.md`**: Firebase configuration guide
+## License
 
----
+An academic project developed for educational purposes. No open-source licence
+is granted.
 
-## 🎓 Academic Project Details
+## Acknowledgements
 
-### Features Implemented
-
-**Phase 1: Core Features** (Sessions 1-6)
-- All 12 screens
-- Firebase Authentication
-- Real-time noise measurement
-- GPS location tracking
-- Map with markers
-
-**Phase 2: AI Integration** (Sessions 7-10)
-- YAMNet model integration
-- Real-time sound classification
-- Audio capture and processing
-- Classification persistence
-
-**Phase 3: Polish & Testing** (Sessions 11-14)
-- Code quality improvements (0 errors)
-- Logger system implementation
-- Environment variables setup
-- 120+ automated tests
-- Security hardening
-
-**Phase 4: Bug Fixing** (Sessions 15-19)
-- User testing conducted
-- 14 bugs identified and fixed
-- All critical, high, and medium priority issues resolved
-- Production-ready state
-
----
-
-## ✅ Current Status
-
-**Development**: ✅ 100% Complete
-**Bug Fixes**: ✅ 14/14 Fixed (100%)
-**Code Quality**: ✅ 0 Errors, 0 Warnings
-**Testing**: ✅ 120+ Test Cases Created
-**Documentation**: 🔄 In Progress
-
----
-
-## 📝 Test User Account
-
-**Email**: test@example.com
-**Password**: test123
-
----
-
-## 🔒 Firebase Security
-
-Production security rules are active:
-- Authentication required for all operations
-- Users can only modify their own data
-- Read access granted for community features
-- Data validation enforced
-
----
-
-## 📱 Supported Platforms
-
-- ✅ Android 7.0+ (API Level 24+)
-- ✅ iOS (configured, not extensively tested)
-- ❌ Web (not supported - requires microphone access)
-
----
-
-## 🐛 Known Issues
-
-None - All 14 identified bugs have been fixed in Sessions 15-19.
-
----
-
-## 📄 License
-
-This is an academic project developed for educational purposes.
-
----
-
-## 👨‍💻 Developer
-
-**Nuhaadh Hassan**
-Student ID: 20230670 (KD/BSCSD/20/74)
-Final Year Project - CIS6035
-Contact: [Your Email/Contact]
-
----
-
-## 🙏 Acknowledgments
-
-- YAMNet model by Google Research
-- Firebase by Google
-- Flutter framework by Google
-- OpenStreetMap for map tiles
-- Sri Lankan government for project sponsorship
-
----
-
-**Project Status**: Ready for final testing and documentation phase
-**Last Updated**: 2026-01-29 (Session 19)
+YAMNet by Google Research, Firebase and Flutter by Google, and OpenStreetMap for
+map tiles.
