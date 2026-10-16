@@ -98,9 +98,16 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // on this flag so the hardcoded Colombo default above is never persisted.
   bool _hasRealLocation = false;
 
-  // dash-6: timestamp of the last NoiseReading delivered by the meter stream.
+  // dash-6: timestamp of the last NoiseReading that refreshed _currentDb.
   // The save timer refuses to persist _currentDb if the stream has stalled.
   DateTime? _lastNoiseReadingAt;
+
+  // Whether the meter's most recent reading carried audio (a finite dB).
+  // Device QA 2026-10-17: with the mic silenced, the meter switched to
+  // -Infinity readings, and the next save tick, still inside the 6 s stall
+  // window, stored the frozen 62 dB with the classifier's "Quiet" (it was
+  // classifying zeros). The save timer skips while this is false.
+  bool _meterHasAudio = false;
 
   // dash-6: Dashboard's index in MainAppShell's IndexedStack
   // (Map=0, Analytics=1, Dashboard=2, History=3, Settings=4).
@@ -614,6 +621,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
       _lastNoiseReadingAt = null;
+      _meterHasAudio = false;
       _lastClassificationAt = null;
 
       // Location already fetched on screen start, no need to request again
@@ -675,6 +683,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 const Duration(seconds: 6)) {
           AppLogger.warning(
             'Skipping reading save: noise stream stalled (no reading in >6s)',
+          );
+          return;
+        }
+        // The meter is delivering silence (-Infinity dB): _currentDb is
+        // frozen, and the classifier is hearing zeros ("Quiet").
+        if (!_meterHasAudio) {
+          AppLogger.warning(
+            'Skipping reading save: the meter is delivering no audio',
           );
           return;
         }
@@ -988,7 +1004,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         // is alive. A dead AudioRecord keeps delivering zero-filled buffers
         // (-Infinity dB), which must not hide the dead meter from the
         // no-audio watchdog.
-        if (reading.meanDecibel.isFinite) {
+        _meterHasAudio = reading.meanDecibel.isFinite;
+        if (_meterHasAudio) {
           _audioWatchdog.audioReceived(AudioFeed.meter, DateTime.now());
         }
 
