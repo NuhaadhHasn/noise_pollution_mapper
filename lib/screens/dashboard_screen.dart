@@ -1386,6 +1386,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   // Stat card for min/avg/max values - matching your design
   Widget _buildStatCard(String label, double value, IconData icon) {
+    // a1-4: no reading yet -> placeholder, never "Infinity" (MIN starts at
+    // double.infinity) or a fake "0" (AVG and MAX start at 0.0).
+    final valueText =
+        NoiseStats.formatStatDb(value, hasData: _dbHistory.isNotEmpty);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1402,7 +1406,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         const SizedBox(height: 4),
         // Value (big number)
         Text(
-          value.toStringAsFixed(0),
+          valueText,
+          // Screen readers would otherwise read the dash as punctuation.
+          semanticsLabel:
+              valueText == NoiseStats.noDataPlaceholder ? 'no data' : null,
           style: TextStyle(
             color: ThemeHelper.getTextColor(context),
             fontSize: 28,

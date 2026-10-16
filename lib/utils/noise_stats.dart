@@ -23,4 +23,17 @@ class NoiseStats {
     final meanEnergy = energySum / dbValues.length;
     return 10 * (math.log(meanEnergy) / math.ln10);
   }
+
+  /// Shown on a MIN/AVG/MAX stat card before there is any reading.
+  static const String noDataPlaceholder = '—';
+
+  /// Formats a MIN/AVG/MAX dashboard stat as whole decibels.
+  ///
+  /// Returns [noDataPlaceholder] when there is no reading yet ([hasData] is
+  /// false) or [value] is not finite. MIN starts at `double.infinity` until
+  /// the first reading, and printing it showed "Infinity" (device QA
+  /// 2026-10-16), while AVG and MAX printed a misleading "0". All three now
+  /// show the same placeholder until a reading exists.
+  static String formatStatDb(double value, {required bool hasData}) =>
+      hasData && value.isFinite ? value.toStringAsFixed(0) : noDataPlaceholder;
 }

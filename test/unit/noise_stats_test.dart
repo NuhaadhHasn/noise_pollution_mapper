@@ -39,4 +39,39 @@ void main() {
       expect(leq, lessThanOrEqualTo(80.0));
     });
   });
+
+  // a1-4 (device QA 2026-10-16): the dashboard MIN card showed "Infinity"
+  // before the first reading, because MIN starts at double.infinity.
+  group('NoiseStats.formatStatDb', () {
+    test('MIN before any reading is the placeholder, not "Infinity"', () {
+      expect(
+        NoiseStats.formatStatDb(double.infinity, hasData: false),
+        NoiseStats.noDataPlaceholder,
+      );
+      expect(
+        NoiseStats.formatStatDb(double.infinity, hasData: false),
+        isNot(contains('Infinity')),
+      );
+    });
+
+    test('AVG and MAX before any reading match MIN, not a fake "0"', () {
+      expect(NoiseStats.formatStatDb(0.0, hasData: false),
+          NoiseStats.noDataPlaceholder);
+    });
+
+    test('a non-finite value never prints, even with data', () {
+      expect(NoiseStats.formatStatDb(double.infinity, hasData: true),
+          NoiseStats.noDataPlaceholder);
+      expect(NoiseStats.formatStatDb(double.negativeInfinity, hasData: true),
+          NoiseStats.noDataPlaceholder);
+      expect(NoiseStats.formatStatDb(double.nan, hasData: true),
+          NoiseStats.noDataPlaceholder);
+    });
+
+    test('a real reading prints as whole decibels', () {
+      expect(NoiseStats.formatStatDb(63.4, hasData: true), '63');
+      expect(NoiseStats.formatStatDb(63.5, hasData: true), '64');
+      expect(NoiseStats.formatStatDb(0.0, hasData: true), '0');
+    });
+  });
 }
