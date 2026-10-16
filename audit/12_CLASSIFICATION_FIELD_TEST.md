@@ -304,9 +304,13 @@ Owner-approved fix, implemented in
 > within an absolute **0.15** of the broad class, report the specific class:
 > its category and its own score.
 
-- **Broad set:** `{Vehicle, Water}`, exactly. The justification, including
-  why `Motor vehicle (road)` and `Engine` are left out, is in the doc comment
-  on `SoundClassificationService.broadCatchAllClasses`.
+Tuned the same evening after the session-2 re-test: the margin is now
+**0.18** and `Engine` joined the broad set (§7.4).
+
+- **Broad set:** `{Vehicle, Water}` at first, `{Vehicle, Water, Engine}`
+  since §7.4. The justification, including why `Motor vehicle (road)` is
+  left out, is in the doc comment on
+  `SoundClassificationService.broadCatchAllClasses`.
 - **Absolute margin**, like the 0.10 gate, because the 521 scores are
   independent sigmoids (§2.1 correction).
 - **The strongest specific class decides.** The candidate is the
@@ -315,7 +319,7 @@ Owner-approved fix, implemented in
   changes.
 - **Mirror case.** A broad runner-up never gates a specific winner. The
   train had one window with Rail transport 0.957 over Vehicle 0.941. The
-  rule would let Rail transport win from 0.15 *below* Vehicle, so it must
+  rule would let Rail transport win from the margin *below* Vehicle, so it must
   also win from above. The same applies to the thunderstorm tie, whichever
   of the tied classes sorts first.
 - **Unchanged:** the 0.30 threshold on the top-1; the 0.10 gate between two
@@ -342,10 +346,139 @@ Traffic, 7 Speech, 3 Music, 10 Uncertain).
 Still open:
 
 - **Re-test on device** with this build. These are replayed logs, not live
-  runs; the log line above makes each decision self-explanatory.
+  runs; the log line above makes each decision self-explanatory. (Done the
+  same evening; see §7.4.)
 - **Airplane, Praterstern and rain did not move.** YAMNet never put an
   aircraft class, a motorcycle class or `Rain` close enough to the top, so no
   ranking rule can rescue them. Re-test at a lower ambient level, or with the
   phone away from the speaker's low-frequency boom.
 - **Watch `Motor vehicle (road)`.** If a re-test shows it at #1, or within
   0.10 of a `Motorcycle`, it is the next broad-set candidate.
+
+### 7.4 Session 2 (rule build) and the margin/Engine tuning
+
+- **Build:** debug APK of `8065bd9`, which has the §7.2 rule (margin 0.15,
+  broad set `{Vehicle, Water}`). Same phone, same room and same playback
+  method as §7.1.
+- **Runs:** 12 runs, 48 windows (`log_v3_*.txt` in the QA scratchpad
+  `phone2/`): train ×2, Jawa ×2, hammer drill ×2, helicopter, Praterstern,
+  thunder, chainsaw, and 2 control runs with nothing playing.
+
+#### Session 2 results
+
+Per 5 s window. † marks the window logged after playback was stopped.
+"Tuned" is the same score vectors with the change below (margin 0.18,
+`Engine` broad).
+
+| Run | On device (0.15, `{Vehicle, Water}`) | Tuned | What YAMNet scored |
+|---|---|---|---|
+| Train | Traffic, Transport, Transport, Nature† | unchanged | Rail transport 0.957 on top; Vehicle 0.668 / Subway 0.586 |
+| Train, run 2 | Traffic, Traffic, Transport, Transport† | unchanged | Vehicle 0.668 / Rail transport 0.414 (three levels) stays Traffic |
+| Jawa 350 | Traffic ×3, Traffic† | Traffic, **Tuk-tuk ×2**, **Tuk-tuk†** | Vehicle 0.586 / Motorcycle 0.332 (three levels), then 0.586 / 0.414, 0.50 / 0.332, 0.738 / 0.586 (two levels each) |
+| Jawa 350, run 2 | Traffic, Traffic, Uncertain, Traffic† | **Tuk-tuk**, Traffic, Uncertain, Traffic† | Vehicle 0.50 / Motorcycle 0.332; then Motorcycle 0.262 (below 0.30) |
+| Hammer drill | Traffic, Construction, Traffic, Uncertain (low)† | Traffic, Construction, **Construction**, Uncertain (low)† | Engine 0.414 with nothing else over 0.30; Engine 0.50 / Jackhammer 0.332 |
+| Hammer drill, run 2 | Traffic, Uncertain ×2, Uncertain (low)† | Traffic, **Construction ×2**, Uncertain (low)† | Tools 0.414 / Engine 0.332; Engine 0.50 / Power tool 0.414 |
+| Helicopter | Traffic ×2, Transport, Uncertain (low)† | unchanged | Helicopter 0.738 over Vehicle 0.668 |
+| Praterstern | Traffic ×3, Uncertain (low)† | unchanged | Vehicle 0.67–0.85, Accelerating 0.332 (Traffic). No Motorcycle in the top-3 |
+| Thunder | Traffic, Uncertain (low), Traffic, Transport† | unchanged | Vehicle 0.33–0.41; Rain at most 0.199. The † window is Vehicle 0.414 = Aircraft 0.414 |
+| Chainsaw | Industrial ×3, Industrial† | unchanged | Chainsaw / Light engine 0.89–0.94, Engine third |
+| Control | Uncertain (low), Music, Uncertain (low) ×2 | unchanged | Vehicle at most 0.148; one window of Music 0.918 from the room |
+| Control, run 2 | Traffic ×4 | unchanged | **Vehicle 0.586 / Aircraft and Helicopter 0.332**: the room's closest call |
+
+Three findings from this session:
+
+- **YAMNet is uint8-quantised.** Every score sits on one ladder: … 0.199,
+  0.262, 0.332, 0.414, 0.50, 0.586, 0.668, 0.738, 0.801, 0.852, 0.891 …
+  With the broad class at 0.50–0.738, one level down is 0.07–0.09 behind,
+  two levels 0.152–0.172, three levels 0.238–0.254. A 0.15 margin admits
+  only one level there, and the Jawa's Motorcycle lost by exactly two.
+- **`Engine` behaves as a generic parent.** It led five hammer-drill
+  windows and hid the tool in three of them, which read Traffic or
+  Uncertain. It also sits at 0.74–0.89 under every chainsaw window.
+- **The room never came closer than three levels.** In the 99 control and
+  room windows of both sessions, no specific class from another category
+  that scored 0.30 or more came closer than three levels to a broad top-1.
+
+#### Replay of both sessions
+
+Every Top-3 line from both sessions (202 windows: 154 from session 1,
+48 from session 2) was replayed through the current rule and three
+variants: (1) margin 0.18; (2) `Engine` added to the broad set; (1)+(2).
+
+Each window was placed against playback using the player's own logcat
+lines (`NuPlayerDriver` start, pause/stop, playback complete). The
+classifier sees the last 0.975 s before the log line. **Control and room
+windows (99):** 76 from runs with nothing audible (3 control runs, 2
+silent-file runs, the 4.5-minute room recording and one short room run),
+plus 23 whose input lies wholly outside playback. Also: 91 windows inside
+playback, and 12 that straddle the start or stop.
+
+Checks: the replay reproduces the logged on-device decision for all 154
+session-1 windows (pre-rule build) and all 48 session-2 windows (rule
+build). After the change, `decideCategory` gives the same answer as the
+replayed (1)+(2) on all 202 windows.
+
+| Variant | Windows changed | Improvements | Regressions | False flips (99 control/room windows) | Lateral (wrong → other wrong) |
+|---|---|---|---|---|---|
+| (1) margin 0.18 | 7 | 5 (Jawa) | 0 | 0 | 2 |
+| (2) `Engine` broad | 3 | 3 (hammer drill) | 0 | 0 | 0 |
+| (1)+(2) | 11 | 9 (Jawa ×5, hammer drill ×4) | 0 | 0 | 2 |
+
+- **Improvements.** Jawa ×5: Vehicle over Motorcycle at 0.586 / 0.414
+  (both sessions), 0.50 / 0.332 (both runs) and 0.738 / 0.586, Traffic →
+  Tuk-tuk. Hammer drill ×4: Engine 0.414 = Jackhammer 0.414 and Engine
+  0.50 / Power tool 0.414 (Uncertain → Construction, (2) alone), Tools
+  0.414 over Engine 0.332 (Uncertain → Construction: a broad runner-up no
+  longer gates), and Engine 0.50 / Jackhammer 0.332 (Traffic →
+  Construction, needs both).
+- **Laterals.** Wrong before and wrong after, so neither an improvement
+  nor a regression. The helicopter window Vehicle 0.50 / Motorcycle 0.332
+  becomes Tuk-tuk (was Traffic), and the crowd's first window, Vehicle
+  0.668 / Subway 0.50, becomes Transport (was Traffic). No margin on these
+  scores can separate them from the Jawa: the helicopter's vector is the
+  Jawa's 0.50 / 0.332, and the crowd's 0.168 gap is the same gap.
+- **The straddling window.** One Jawa improvement, Vehicle 0.738 /
+  Motorcycle 0.586, was logged 0.83 s after playback was stopped. Its
+  input still holds the sample: it is the run's highest Motorcycle score,
+  and no room window ever showed Motorcycle. It is counted as a Jawa
+  window. Read strictly as a post-stop window, (1) would have one false
+  flip; the other four Jawa improvements stand either way.
+- **Boundary check.** No window's gap is within 0.4 pp of 0.18 (the logs
+  round to 0.1 pp).
+
+#### Decision
+
+**Adopted (1)+(2): margin 0.18, broad set `{Vehicle, Water, Engine}`.**
+All three variants pass both gates: zero false flips on the 99
+control/room windows and zero regressions. (1) and (2) fix different
+windows, and one drill window needs both, so (1)+(2) is the smallest change
+that gets all nine improvements. §7.1's "With §7.2" column is the old
+rule; under the tuning, four of its session-1 windows change: Jawa (the
+0.172 window → Tuk-tuk), hammer drill (Uncertain → Construction), and
+the two laterals.
+
+Risks kept in view:
+
+- **Room headroom is one level now, not two.** The room's closest call,
+  Vehicle 0.586 / Aircraft 0.332, is three levels; 0.18 flips at two.
+  Scores move by a level between windows routinely, so watch the control
+  runs.
+- **`Engine` on road traffic is untested.** If `Engine` leads and an
+  Industrial child (`Light engine`, `Medium engine`) is the strongest
+  specific class within 0.18, the window reads Industrial. `Engine` never
+  led a road or room window here.
+- **Above 0.89 the margin admits three levels** (0.891 vs 0.738 is
+  0.153). No logged window needed it, and none in the room had a
+  different-category class over 0.30 under such a top-1.
+
+#### Re-test on the phone (build with this change)
+
+- **Jawa 350, two runs:** two-level windows should read Tuk-tuk.
+- **Hammer drill, two runs:** Engine-led windows with a tool within 0.18
+  should read Construction.
+- **Control with nothing playing, at least three runs:** must stay
+  Traffic or Uncertain. Any Transport or Tuk-tuk window is a false flip;
+  revert the margin to 0.15 if one appears.
+- **Helicopter and crowd:** the two laterals. Check whether they recur.
+- **Chainsaw** (stays Industrial) and **train** (stays Transport).
+- **New: idling or passing road traffic,** for the untested `Engine` risk.

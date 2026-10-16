@@ -140,6 +140,9 @@ class YAMNetClassMapping {
     'Vehicle horn, car horn, honking': categoryTraffic,
     'Car alarm': categoryTraffic,
     'Accelerating, revving, vroom': categoryTraffic,
+    // 'Engine' is a BROAD catch-all (parent of Idling and of the
+    // Industrial Light/Medium engine): see
+    // SoundClassificationService.broadCatchAllClasses.
     'Engine': categoryTraffic,
     'Engine starting': categoryTraffic,
     'Idling': categoryTraffic,

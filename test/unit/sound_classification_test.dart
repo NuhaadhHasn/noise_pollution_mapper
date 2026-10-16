@@ -420,8 +420,9 @@ void main() {
   // --- Specific over broad (field test 12 §7) ----------------------------
   //
   // Every score vector below is a real YAMNet Top-3 from the on-device
-  // run of 2026-10-16 (Galaxy S9+). The scratchpad file names are given;
-  // the logs print scores to 0.1%. Synthetic vectors are labelled as such.
+  // runs of 2026-10-16 (Galaxy S9+). Session 1 is the pre-rule build
+  // (log_<name>.txt), session 2 the rule build (log_v3_<name>.txt). The
+  // logs print scores to 0.1%. Synthetic vectors are labelled as such.
   group('Specific over broad (field test 2026-10-16)', () {
     ClassificationCandidate c(int index, String name, double score) =>
         ClassificationCandidate(
@@ -435,14 +436,20 @@ void main() {
 
     test('the broad set is small and explicit, the margin absolute', () {
       expect(SoundClassificationService.broadCatchAllClasses,
-          equals({'Vehicle', 'Water'}));
+          equals({'Vehicle', 'Water', 'Engine'}));
+      expect(SoundClassificationService.isBroadCatchAll('Engine'), isTrue);
       // Considered and rejected - see the doc comment on the set.
       expect(SoundClassificationService.isBroadCatchAll('Motor vehicle (road)'),
           isFalse);
-      expect(SoundClassificationService.isBroadCatchAll('Engine'), isFalse);
+      // Engine's children stay specific.
+      expect(
+          SoundClassificationService.isBroadCatchAll(
+              'Light engine (high frequency)'),
+          isFalse);
+      expect(SoundClassificationService.isBroadCatchAll('Idling'), isFalse);
       expect(SoundClassificationService.isBroadCatchAll('Silence'), isFalse);
 
-      expect(SoundClassificationService.specificOverBroadMargin, equals(0.15));
+      expect(SoundClassificationService.specificOverBroadMargin, equals(0.18));
       expect(SoundClassificationService.specificOverBroadMargin,
           greaterThan(SoundClassificationService.ambiguityMargin));
       expect(SoundClassificationService.specificOverBroadMargin,
@@ -450,6 +457,32 @@ void main() {
       // Unchanged invariants.
       expect(SoundClassificationService.confidenceThreshold, equals(0.30));
       expect(SoundClassificationService.ambiguityMargin, equals(0.10));
+    });
+
+    test('the margin admits two quantisation levels, not three '
+        '(field test 12 §7.4)', () {
+      // Synthetic pairs built from score levels the uint8 model actually
+      // emitted that day. Indices: 0.262, 0.332, 0.414, 0.50, 0.586,
+      // 0.668, 0.738, 0.801, 0.852.
+      const ladder = [0.262, 0.332, 0.414, 0.50, 0.586, 0.668, 0.738, 0.801,
+        0.852];
+      String pair(double vehicle, double motorcycle) => categoryOf([
+            c(294, 'Vehicle', vehicle),
+            c(320, 'Motorcycle', motorcycle),
+            c(300, 'Motor vehicle (road)', 0.109),
+          ]);
+      // Broad class at 0.50-0.738: two levels below is promoted, three
+      // levels below is not.
+      for (var i = 3; i <= 6; i++) {
+        expect(pair(ladder[i], ladder[i - 2]),
+            equals(YAMNetClassMapping.categoryTuktuk),
+            reason: 'two levels: ${ladder[i]} vs ${ladder[i - 2]}');
+        expect(pair(ladder[i], ladder[i - 3]),
+            equals(YAMNetClassMapping.categoryTraffic),
+            reason: 'three levels: ${ladder[i]} vs ${ladder[i - 3]}');
+      }
+      // Three levels below 0.852 is 0.184 behind: still out.
+      expect(pair(0.852, 0.668), equals(YAMNetClassMapping.categoryTraffic));
     });
 
     test('train -> Transport (log_train.txt, every train window)', () {
@@ -492,6 +525,35 @@ void main() {
       expect(railOnTop.runnerUp?.className, equals('Train'));
     });
 
+    test('train stays Transport (log_v3_train.txt, log_v3_train_r2.txt)', () {
+      for (final w in const [
+        [['Vehicle', 0.941], ['Rail transport', 0.918], ['Train', 0.891]],
+        [['Vehicle', 0.988], ['Rail transport', 0.969], ['Train', 0.941]],
+        [['Rail transport', 0.957], ['Train', 0.941], ['Vehicle', 0.918]],
+        [
+          ['Vehicle', 0.668],
+          ['Subway, metro, underground', 0.586],
+          ['Rail transport', 0.50],
+        ],
+      ]) {
+        expect(
+          categoryOf([for (final e in w) c(-1, e[0] as String, e[1] as double)]),
+          equals(YAMNetClassMapping.categoryTransport),
+          reason: w.toString(),
+        );
+      }
+      // The approach: Rail transport three levels (0.254) under Vehicle
+      // stays Traffic, as the room's own Rail transport reading must.
+      expect(
+        categoryOf([
+          c(294, 'Vehicle', 0.668),
+          c(322, 'Rail transport', 0.414),
+          c(323, 'Train', 0.414),
+        ]),
+        equals(YAMNetClassMapping.categoryTraffic),
+      );
+    });
+
     test('Jawa motorbike -> Tuk-tuk (log_motorcycle_jawa350.txt)', () {
       final first = decide([
         c(294, 'Vehicle', 0.738),
@@ -512,15 +574,59 @@ void main() {
         equals(YAMNetClassMapping.categoryTuktuk),
       );
 
-      // Vehicle 17.2pp clear of Motorcycle is outside the 0.15 margin,
-      // so it stays Traffic. Logged as-is, not hidden.
+      // Motorcycle two levels (17.2pp) under Vehicle. It read Traffic
+      // under the old 0.15 margin; 0.18 admits it.
       expect(
         categoryOf([
           c(294, 'Vehicle', 0.586),
           c(320, 'Motorcycle', 0.414),
           c(300, 'Motor vehicle (road)', 0.199),
         ]),
-        equals(YAMNetClassMapping.categoryTraffic),
+        equals(YAMNetClassMapping.categoryTuktuk),
+      );
+    });
+
+    test('Jawa motorbike, rule build: two levels down -> Tuk-tuk '
+        '(log_v3_jawa350.txt, log_v3_jawa350_r2.txt)', () {
+      // Every one of these read Traffic on the device with 0.15.
+      for (final w in const [
+        [0.586, 0.414, 0.199], // gap 0.172
+        [0.50, 0.332, 0.109], // gap 0.168, logged in both runs
+        [0.738, 0.586, 0.332], // gap 0.152, the window as playback stopped
+      ]) {
+        final d = decide([
+          c(294, 'Vehicle', w[0]),
+          c(320, 'Motorcycle', w[1]),
+          c(300, 'Motor vehicle (road)', w[2]),
+        ]);
+        expect(d.category, equals(YAMNetClassMapping.categoryTuktuk),
+            reason: 'Vehicle ${w[0]} / Motorcycle ${w[1]}');
+        expect(d.chosen.className, equals('Motorcycle'));
+        expect(d.overruledBroad?.className, equals('Vehicle'));
+      }
+
+      // Three or more levels down, or under 0.30, it stays Traffic.
+      for (final w in const [
+        [['Vehicle', 0.586], ['Motorcycle', 0.332], ['Helicopter', 0.199]],
+        [['Vehicle', 0.738], ['Motorcycle', 0.414],
+          ['Motor vehicle (road)', 0.199]],
+        [['Vehicle', 0.586], ['Motorcycle', 0.262], ['Engine', 0.148]],
+      ]) {
+        expect(
+          categoryOf([for (final e in w) c(-1, e[0] as String, e[1] as double)]),
+          equals(YAMNetClassMapping.categoryTraffic),
+          reason: w.toString(),
+        );
+      }
+      // A Motorcycle under 0.30 is never promoted, so the near-tie gate
+      // still fires.
+      expect(
+        categoryOf([
+          c(294, 'Vehicle', 0.332),
+          c(320, 'Motorcycle', 0.262),
+          c(300, 'Motor vehicle (road)', 0.082),
+        ]),
+        equals(YAMNetClassMapping.categoryUncertain),
       );
     });
 
@@ -534,20 +640,45 @@ void main() {
       expect(d.chosen.className, equals('Helicopter'));
       expect(d.overruledBroad?.className, equals('Vehicle'));
 
-      // Another window of the same run: Motorcycle 16.8pp under Vehicle
-      // is outside the margin, so it stays Traffic.
+      // log_v3_helicopter.txt: Helicopter on top of Vehicle (mirror case).
       expect(
         categoryOf([
-          c(294, 'Vehicle', 0.50),
-          c(320, 'Motorcycle', 0.332),
-          c(300, 'Motor vehicle (road)', 0.148),
+          c(333, 'Helicopter', 0.738),
+          c(294, 'Vehicle', 0.668),
+          c(329, 'Aircraft', 0.586),
         ]),
-        equals(YAMNetClassMapping.categoryTraffic),
+        equals(YAMNetClassMapping.categoryTransport),
+      );
+    });
+
+    test('known cost: two-level promotions the scores cannot tell apart '
+        '(field test 12 §7.4)', () {
+      // log_helicopter.txt: the same Vehicle 0.50 / Motorcycle 0.332 as
+      // two Jawa windows, so the helicopter's rotor now reads Tuk-tuk.
+      // It read Traffic before, which was also wrong.
+      final heli = decide([
+        c(294, 'Vehicle', 0.50),
+        c(320, 'Motorcycle', 0.332),
+        c(300, 'Motor vehicle (road)', 0.148),
+      ]);
+      expect(heli.category, equals(YAMNetClassMapping.categoryTuktuk));
+      expect(heli.overruledBroad?.className, equals('Vehicle'));
+
+      // log_crowd.txt: a crowd's first window, Subway 0.168 under
+      // Vehicle (the Jawa's gap), now reads Transport, not Traffic.
+      expect(
+        categoryOf([
+          c(294, 'Vehicle', 0.668),
+          c(328, 'Subway, metro, underground', 0.50),
+          c(322, 'Rail transport', 0.50),
+        ]),
+        equals(YAMNetClassMapping.categoryTransport),
       );
     });
 
     test('room baseline with nothing playing stays Traffic '
-        '(log_control_noplay.txt)', () {
+        '(log_control_noplay.txt, log_v3_control_r2.txt, log_taskB.txt)',
+        () {
       // Vehicle 0.738 with Rail transport 0.332: a 0.41 gap.
       final d = decide([
         c(294, 'Vehicle', 0.738),
@@ -566,6 +697,35 @@ void main() {
         ]),
         equals(YAMNetClassMapping.categoryTraffic),
       );
+
+      // log_v3_control_r2.txt: the room's closest call. Aircraft and
+      // Helicopter sit three levels (0.254) under Vehicle; 0.18 admits
+      // two, so this is one level from flipping.
+      final closest = decide([
+        c(294, 'Vehicle', 0.586),
+        c(329, 'Aircraft', 0.332),
+        c(333, 'Helicopter', 0.332),
+      ]);
+      expect(closest.category, equals(YAMNetClassMapping.categoryTraffic));
+      expect(closest.overruledBroad, isNull);
+
+      for (final w in const [
+        // log_v3_control_r2.txt: Engine is broad now, and its Traffic
+        // child is under 0.30.
+        [['Vehicle', 0.586], ['Engine', 0.148],
+          ['Heavy engine (low frequency)', 0.148]],
+        [['Vehicle', 0.586], ['Motorboat, speedboat', 0.148],
+          ['Boat, Water vehicle', 0.109]],
+        // log_taskB.txt (4.5 min, nothing playing)
+        [['Vehicle', 0.801], ['Railroad car, train wagon', 0.414],
+          ['Rail transport', 0.414]],
+      ]) {
+        expect(
+          categoryOf([for (final e in w) c(-1, e[0] as String, e[1] as double)]),
+          equals(YAMNetClassMapping.categoryTraffic),
+          reason: w.toString(),
+        );
+      }
     });
 
     test('real road traffic stays Traffic (train, silence, taskB logs)', () {
@@ -586,6 +746,12 @@ void main() {
           ['Traffic noise, roadway noise', 0.414],
           ['Motor vehicle (road)', 0.199],
         ],
+        // log_v3_passby.txt
+        [
+          ['Vehicle', 0.801],
+          ['Accelerating, revving, vroom', 0.332],
+          ['Motor vehicle (road)', 0.262],
+        ],
       ];
       for (final w in traffic) {
         final d = decide([
@@ -598,7 +764,8 @@ void main() {
     });
 
     test('chainsaw stays Industrial, drill stays Construction', () {
-      // log_chainsaw.txt - no broad class involved.
+      // log_chainsaw.txt and log_v3_chainsaw.txt. Engine (broad) is
+      // always third, under two Industrial classes.
       for (final w in const [
         [['Light engine (high frequency)', 0.891], ['Chainsaw', 0.891],
           ['Engine', 0.801]],
@@ -606,6 +773,12 @@ void main() {
           ['Engine', 0.891]],
         [['Light engine (high frequency)', 0.801], ['Chainsaw', 0.801],
           ['Engine', 0.738]],
+        [['Chainsaw', 0.918], ['Light engine (high frequency)', 0.891],
+          ['Engine', 0.801]],
+        [['Light engine (high frequency)', 0.941], ['Chainsaw', 0.941],
+          ['Engine', 0.852]],
+        [['Chainsaw', 0.941], ['Light engine (high frequency)', 0.918],
+          ['Engine', 0.852]],
       ]) {
         expect(
           categoryOf([for (final e in w) c(-1, e[0] as String, e[1] as double)]),
@@ -618,10 +791,54 @@ void main() {
         [['Tools', 0.414], ['Power tool', 0.414], ['Drill', 0.262]],
         [['Jackhammer', 0.586], ['Tools', 0.50], ['Engine', 0.332]],
         [['Jackhammer', 0.668], ['Tools', 0.50], ['Power tool', 0.414]],
+        // log_v3_hammerdrill.txt
+        [['Jackhammer', 0.414], ['Tools', 0.332], ['Power tool', 0.332]],
       ]) {
         expect(
           categoryOf([for (final e in w) c(-1, e[0] as String, e[1] as double)]),
           equals(YAMNetClassMapping.categoryConstruction),
+          reason: w.toString(),
+        );
+      }
+    });
+
+    test('hammer drill: Engine steps aside for the tool '
+        '(log_hammerdrill.txt, log_v3_hammerdrill*.txt)', () {
+      // Each of these read Traffic or Uncertain on the device.
+      for (final w in const [
+        // Engine on top, the tool within the margin.
+        [['Engine', 0.414], ['Jackhammer', 0.414], ['Tools', 0.332]],
+        [['Engine', 0.50], ['Power tool', 0.414], ['Jackhammer', 0.414]],
+        // Two levels (0.168) down: needs both Engine and the 0.18 margin.
+        [['Engine', 0.50], ['Jackhammer', 0.332], ['Tools', 0.262]],
+      ]) {
+        final d = decide(
+            [for (final e in w) c(-1, e[0] as String, e[1] as double)]);
+        expect(d.category, equals(YAMNetClassMapping.categoryConstruction),
+            reason: w.toString());
+        expect(d.overruledBroad?.className, equals('Engine'));
+        expect(d.chosen.className, equals(w[1][0]));
+      }
+
+      // Mirror case: Engine as runner-up no longer gates the tool.
+      final mirror = decide([
+        c(412, 'Tools', 0.414),
+        c(337, 'Engine', 0.332),
+        c(418, 'Power tool', 0.332),
+      ]);
+      expect(mirror.category, equals(YAMNetClassMapping.categoryConstruction));
+      expect(mirror.overruledBroad, isNull);
+      expect(mirror.runnerUp?.className, equals('Power tool'));
+
+      // Still open: with nothing specific above 0.30, Engine's own
+      // category stands.
+      for (final w in const [
+        [['Engine', 0.414], ['Idling', 0.109], ['Vibration', 0.109]],
+        [['Engine', 0.414], ['Lawn mower', 0.148], ['Idling', 0.109]],
+      ]) {
+        expect(
+          categoryOf([for (final e in w) c(-1, e[0] as String, e[1] as double)]),
+          equals(YAMNetClassMapping.categoryTraffic),
           reason: w.toString(),
         );
       }
@@ -703,12 +920,12 @@ void main() {
     });
 
     test('non-broad near-ties keep the 0.10 gate', () {
-      // log_hammerdrill.txt: Engine is NOT broad, so this stays Uncertain.
+      // log_printer.txt
       expect(
         categoryOf([
-          c(337, 'Engine', 0.414),
-          c(414, 'Jackhammer', 0.414),
-          c(412, 'Tools', 0.332),
+          c(409, 'Printer', 0.50),
+          c(398, 'Mechanisms', 0.414),
+          c(408, 'Cash register', 0.199),
         ]),
         equals(YAMNetClassMapping.categoryUncertain),
       );
@@ -788,13 +1005,24 @@ void main() {
       expect(persistableClassification(low), isNull);
 
       final tie = SoundClassificationService.resultFromRanked([
-        c(337, 'Engine', 0.414),
-        c(414, 'Jackhammer', 0.414),
-        c(412, 'Tools', 0.332),
+        c(371, 'Vacuum cleaner', 0.50),
+        c(412, 'Tools', 0.414),
+        c(418, 'Power tool', 0.262),
       ]);
       expect(tie.isAmbiguous, isTrue);
-      expect(tie.nearTieWith?.className, equals('Jackhammer'));
+      expect(tie.nearTieWith?.className, equals('Tools'));
       expect(persistableClassification(tie), isNull);
+
+      // A drill window that Engine used to hide is saved as the tool.
+      final drill = SoundClassificationService.resultFromRanked([
+        c(337, 'Engine', 0.50),
+        c(418, 'Power tool', 0.414),
+        c(414, 'Jackhammer', 0.414),
+      ]);
+      expect(drill.category, equals(YAMNetClassMapping.categoryConstruction));
+      expect(drill.yamnetClass, equals('Power tool'));
+      expect(drill.confidence, equals(0.414));
+      expect(persistableClassification(drill), same(drill));
     });
   });
 }

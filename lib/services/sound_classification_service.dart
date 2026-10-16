@@ -60,8 +60,8 @@ class SoundClassificationService {
   /// A class belongs here only if all three hold:
   /// 1. It is an AudioSet PARENT whose children span several app
   ///    categories, so its own category is wrong for some of them.
-  /// 2. It fires alongside those children at a similar or higher score,
-  ///    so on top-1 alone it hides them.
+  /// 2. It fires alongside more specific classes at a similar or higher
+  ///    score, so on top-1 alone it hides them.
   /// 3. The on-device evidence shows it doing exactly that.
   ///
   /// - 'Vehicle' (#294 -> Traffic) is the parent of the road vehicles
@@ -75,17 +75,29 @@ class SoundClassificationService {
   ///   on surface (Weather) as well as Stream, Waterfall and Ocean
   ///   (Nature). On 2026-10-16 a thunderstorm scored Thunderstorm, Water
   ///   and Rain at 0.414 each, which read Uncertain.
+  /// - 'Engine' (#337 -> Traffic) is the parent of Idling, Heavy engine
+  ///   and Engine starting (Traffic) and also of Light engine, Medium
+  ///   engine, Lawn mower and Chainsaw (Industrial). It fires on anything
+  ///   motor-driven: 0.74-0.89 under every chainsaw window, and on
+  ///   2026-10-16 it ranked #1 in five hammer-drill windows. In three it
+  ///   hid the tool (Engine 0.50 vs Power tool 0.414, Engine 0.414 =
+  ///   Jackhammer 0.414, Engine 0.50 vs Jackhammer 0.332), and as a
+  ///   runner-up it gated a fourth (Tools 0.414 vs Engine 0.332). Those
+  ///   windows read Traffic or Uncertain, not Construction. Added after
+  ///   the evidence replay in field test 12 §7.4: across all 202 logged
+  ///   windows it changed only hammer-drill windows, each to
+  ///   Construction. Risk kept in view: on road traffic, an Industrial
+  ///   child ('Light engine', 'Medium engine') that is the strongest
+  ///   specific class within the margin would now read Industrial. No
+  ///   logged window showed that (Engine led only on the drill), so
+  ///   re-test with idling or passing road traffic.
   ///
   /// Deliberately NOT included:
   /// - 'Motor vehicle (road)' (#300 -> Traffic): Traffic is right for
   ///   five of its six children (Car, Truck, Bus, Emergency vehicle,
-  ///   Traffic noise). Only Motorcycle differs. Across the 154 windows
+  ///   Traffic noise). Only Motorcycle differs. Across the 202 windows
   ///   logged on 2026-10-16 it never ranked #1 and never came within the
   ///   near-tie margin of a Motorcycle.
-  /// - 'Engine' (#337 -> Traffic): Traffic is the right answer for its
-  ///   commonest input, road vehicles. Its Industrial children ('Light
-  ///   engine', 'Medium engine') are acoustic descriptors that also fire
-  ///   on road traffic, so demoting Engine would let them overrule it.
   /// - Parents whose children all share their category ('Animal',
   ///   'Tools', 'Rail transport', 'Aircraft') could never change an
   ///   outcome. 'Speech' and 'Music' are already the right answer for
@@ -93,7 +105,11 @@ class SoundClassificationService {
   ///
   /// Every entry must be an official class name. yamnet_class_map_test
   /// checks that against the bundled CSV.
-  static const Set<String> broadCatchAllClasses = {'Vehicle', 'Water'};
+  static const Set<String> broadCatchAllClasses = {
+    'Vehicle',
+    'Water',
+    'Engine',
+  };
 
   /// How far (absolute) a SPECIFIC class may score below a broad top-1
   /// and still be reported instead of it. See [decideCategory].
@@ -101,17 +117,29 @@ class SoundClassificationService {
   /// Absolute for the same reason as [ambiguityMargin]: the scores are
   /// independent sigmoids, not shares of one probability mass.
   ///
-  /// Value: 0.15. Any pair within 0.10 was already a near-tie (Uncertain),
-  /// so the rule turns those into the specific class. It also covers the
-  /// 0.10-0.15 band, where the broad class used to win outright. The
-  /// logged scores sit on a discrete ladder whose steps are 0.07-0.09 apart
-  /// between 0.26 and 0.74. In that band, 0.15 admits a specific class
-  /// one step below the broad class but not two. So Vehicle 0.668 vs
-  /// Subway 0.50 (gap 0.168) stays Traffic, while Vehicle 0.738 vs
-  /// Motorcycle 0.668 (0.07) and Vehicle 0.50 vs Helicopter 0.414 (0.086)
-  /// switch. The room baseline, Vehicle 0.738 vs Rail transport 0.332 (a
-  /// 0.41 gap), is nowhere near it.
-  static const double specificOverBroadMargin = 0.15;
+  /// Value: 0.18, set by the evidence replay in field test 12 §7.4 (it
+  /// was 0.15). The bundled YAMNet is uint8-quantised, so its scores sit
+  /// on a discrete ladder: ... 0.199, 0.262, 0.332, 0.414, 0.50, 0.586,
+  /// 0.668, 0.738, 0.801, 0.852, 0.891 ... With the broad class at 0.50 to
+  /// 0.738, a class two levels below it is 0.152-0.172 behind, and one
+  /// three levels below is 0.238-0.254 behind. 0.15 admitted only one
+  /// level there. The Jawa motorbike's Motorcycle sat two levels under
+  /// Vehicle in five windows (gaps 0.152-0.172), and all five read
+  /// Traffic. 0.18 admits two levels and keeps three out up to a
+  /// broad score of 0.852 (0.852 vs 0.668 is 0.184). Above 0.89 the
+  /// levels bunch up and it admits three (0.891 vs 0.738 is 0.153).
+  ///
+  /// The room with nothing playing read Vehicle 0.586 over Aircraft and
+  /// Helicopter 0.332 (three levels, 0.254) and Vehicle 0.738 over Rail
+  /// transport 0.332 (0.406). Both stay Traffic, but the first is one
+  /// level from flipping now, not two.
+  ///
+  /// Known cost: the helicopter window Vehicle 0.50 / Motorcycle 0.332
+  /// is the same score vector as two Jawa windows, and a crowd window
+  /// with Vehicle 0.668 / Subway 0.50 has the same 0.168 gap. They now
+  /// read Tuk-tuk and Transport, where they read Traffic before (wrong
+  /// either way). No margin on these scores can separate them.
+  static const double specificOverBroadMargin = 0.18;
 
   /// How many ranked predictions [ClassificationResult.topPredictions]
   /// carries. Matches the existing Top-3 debug log. [decideCategory]
@@ -165,9 +193,9 @@ class SoundClassificationService {
   ///    other, the result is 'Uncertain'. When the reported class is
   ///    specific, the runner-up is the next SPECIFIC class. A broad
   ///    catch-all never gates a specific winner, since rule 2 would let
-  ///    the specific class win even from 0.15 below it. When the reported
-  ///    class is broad (rule 2 did not fire), the runner-up is plain
-  ///    top-2, as before.
+  ///    the specific class win even from [specificOverBroadMargin] below
+  ///    it. When the reported class is broad (rule 2 did not fire), the
+  ///    runner-up is plain top-2, as before.
   ///
   /// Same-category near-ties are exempt from the gate. YAMNet's taxonomy
   /// is hierarchical and multi-label, so pairs that land in one bucket
