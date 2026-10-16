@@ -14,6 +14,7 @@ import '../utils/app_logger.dart';
 import '../utils/theme_helper.dart';
 import '../utils/shared_app_state.dart';
 import '../utils/noise_stats.dart';
+import '../utils/classify_then_save.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
 import '../widgets/sync_status_indicator.dart';
@@ -113,6 +114,16 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // (Settings > Diagnostics). Display-only - never affects what is saved.
   bool _showClassificationDebug = false;
   bool _isClassifying = false;
+
+  // a1-2: the running classification, shared by every caller that asks while
+  // it runs (the save tick and the live classification tick can coincide).
+  Future<ClassificationResult?>? _classificationInFlight;
+
+  // a1-2: when the last classification captured its audio window. The live
+  // classification tick skips a window that a save tick has just classified,
+  // so coinciding ticks do not run the model twice on the same audio.
+  DateTime? _lastClassificationAt;
+  static const Duration _classificationDedupWindow = Duration(seconds: 1);
 
   // Prevent concurrent location requests
   bool _isGettingLocation = false;
@@ -473,6 +484,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
       _lastNoiseReadingAt = null;
+      _lastClassificationAt = null;
 
       // CRITICAL: if the audio recorder is somehow still running, stop it
       // directly. Do NOT call _stopRecording() here - it would reset the
@@ -649,25 +661,35 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         }
 
         if (_currentDb > 0 && _currentDb.isFinite) {
-          // ml-4/flow2-6: only persist classification data that meets the
-          // 0.30 confidence threshold. Below-threshold ('Uncertain') results
-          // are shown live but never written to Firestore as fact.
-          final classification =
-              (_currentClassification?.meetsThreshold ?? false)
-                  ? _currentClassification
-                  : null;
-          _firebaseService
-              .saveNoiseReading(
-                decibelLevel: _currentDb,
-                latitude: _latitude,
-                longitude: _longitude,
-                locationName: _locationNameIsStatus ? null : _locationName,
-                // Include classification data only when confident
-                soundClass: classification?.category,
-                soundType: classification?.soundType,
-                confidence: classification?.confidence,
-              )
-              .then((outcome) {
+          // Snapshot this tick's reading before any await, so the values
+          // saved are exactly the ones this tick observed.
+          final decibelLevel = _currentDb;
+          final latitude = _latitude;
+          final longitude = _longitude;
+          final locationName = _locationNameIsStatus ? null : _locationName;
+          // a1-2 (device QA 2026-10-16): classify the audio window that ends
+          // at THIS tick, then save with that result. Reading
+          // _currentClassification here stored the previous cycle's class
+          // (or none), because this timer fires just before the
+          // classification timer's tick for the same window.
+          // ml-4/flow2-6 still apply: classifyThenSave only passes on a
+          // result that meets the 0.30 threshold and is not a near-tie.
+          // Below-threshold ('Uncertain') results are shown live but never
+          // written to Firestore as fact. The save itself always happens
+          // (one reading per tick keeps Duration = count x save_frequency).
+          classifyThenSave<SaveOutcome>(
+            classifyCurrentWindow: _performSoundClassification,
+            save: (classification) => _firebaseService.saveNoiseReading(
+              decibelLevel: decibelLevel,
+              latitude: latitude,
+              longitude: longitude,
+              locationName: locationName,
+              // Include classification data only when confident
+              soundClass: classification?.category,
+              soundType: classification?.soundType,
+              confidence: classification?.confidence,
+            ),
+          ).then((outcome) {
             if (outcome == SaveOutcome.failed &&
                 mounted &&
                 !_hasShownSaveErrorSnackbar) {
@@ -684,14 +706,24 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         }
       });
 
-      // Start periodic sound classification (every 5 seconds)
-      // Note: First classification happens immediately, then every 5 seconds
+      // Start periodic sound classification for the live card (every 5
+      // seconds; the first tick is 5 s after start). Each save tick also
+      // classifies its own window (a1-2), see the save timer above.
       _classificationTimer = Timer.periodic(const Duration(seconds: 5), (
         timer,
       ) {
         // CRITICAL: Stop if not recording (prevents timer leak)
         if (!_isRecording || !mounted) return;
-        
+
+        // a1-2: a save tick that fired a moment ago has already classified
+        // (and displayed) this window - don't run the model twice on it.
+        final lastClassification = _lastClassificationAt;
+        if (lastClassification != null &&
+            DateTime.now().difference(lastClassification) <
+                _classificationDedupWindow) {
+          return;
+        }
+
         _performSoundClassification();
       });
 
@@ -809,9 +841,20 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   ///
   /// Uses real audio samples captured from the device microphone
   /// Buffers 0.975 seconds of audio (15600 samples at 16kHz) for YAMNet classification
-  Future<void> _performSoundClassification() async {
-    if (_isClassifying || !_classificationService.isInitialized || _isDisposed) {
-      return;
+  ///
+  /// Returns the result (null when there is not enough audio yet, the model
+  /// is not ready, or inference failed) so a save tick can persist the
+  /// classification of the very window it saves (a1-2). A caller that
+  /// arrives while a classification is running shares it instead of
+  /// starting a second inference.
+  Future<ClassificationResult?> _performSoundClassification() {
+    return _classificationInFlight ??= _classifyLatestWindow()
+        .whenComplete(() => _classificationInFlight = null);
+  }
+
+  Future<ClassificationResult?> _classifyLatestWindow() async {
+    if (!_classificationService.isInitialized || _isDisposed) {
+      return null;
     }
 
     // Check if we have enough audio samples
@@ -823,14 +866,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         AppLogger.debug(
           'Waiting for audio buffer... (${_audioBuffer.length}/$_requiredSamples samples)',
         );
-        return;
+        return null;
       }
     }
 
-    if (!mounted || _isDisposed) return;
+    if (!mounted || _isDisposed) return null;
     setState(() {
       _isClassifying = true;
     });
+    _lastClassificationAt = DateTime.now();
 
     try {
       // Extract the most recent samples (or use all if less than required)
@@ -858,16 +902,22 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       );
 
       if (result != null && mounted && !_isDisposed) {
-        setState(() {
-          _currentClassification = result;
-        });
+        // Only publish to the live card while still recording: a result
+        // that lands after Stop must not reappear on the next start.
+        if (_isRecording) {
+          setState(() {
+            _currentClassification = result;
+          });
+        }
 
         AppLogger.info(
           'Classified: ${result.category} (${result.confidencePercent}) - ${result.soundType}',
         );
       }
+      return result;
     } catch (e) {
       AppLogger.error('Error during classification', e);
+      return null;
     } finally {
       if (mounted && !_isDisposed) {
         setState(() {
