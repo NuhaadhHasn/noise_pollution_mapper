@@ -19,6 +19,7 @@ import '../services/firebase_service.dart';
 import '../services/yamnet_class_mapping.dart';
 import '../services/heatmap_service.dart';
 import '../models/heatmap_point.dart';
+import '../utils/action_snack_bar.dart';
 import '../utils/app_logger.dart';
 import '../utils/marker_key.dart';
 import '../utils/theme_helper.dart';
@@ -314,26 +315,28 @@ class MapViewScreenState extends State<MapViewScreen> {
           setState(() {
             _isLoadingLocation = false;
           });
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text(
-                permission == LocationPermission.deniedForever
-                    ? 'Location permission permanently denied. '
-                          'Enable it in app settings to use your location.'
-                    : 'Location permission denied.',
-              ),
-              backgroundColor: AppTheme.highNoise,
-              duration: const Duration(seconds: 4),
-              action: permission == LocationPermission.deniedForever
-                  ? SnackBarAction(
-                      label: 'Settings',
-                      textColor: Colors.white,
-                      onPressed: () {
-                        Geolocator.openAppSettings();
-                      },
-                    )
-                  : null,
+          // a1-3: replace, don't queue - the 'Settings' action SnackBar
+          // would otherwise stay up and stack on every retry.
+          showActionSnackBar(
+            context,
+            messenger: messenger,
+            content: Text(
+              permission == LocationPermission.deniedForever
+                  ? 'Location permission permanently denied. '
+                        'Enable it in app settings to use your location.'
+                  : 'Location permission denied.',
             ),
+            backgroundColor: AppTheme.highNoise,
+            duration: const Duration(seconds: 4),
+            action: permission == LocationPermission.deniedForever
+                ? SnackBarAction(
+                    label: 'Settings',
+                    textColor: Colors.white,
+                    onPressed: () {
+                      Geolocator.openAppSettings();
+                    },
+                  )
+                : null,
           );
         }
         return false;

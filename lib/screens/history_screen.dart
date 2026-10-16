@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../theme/app_theme.dart';
+import '../utils/action_snack_bar.dart';
 import '../utils/animations.dart';
 import '../utils/csv_builder.dart';
 import '../utils/theme_helper.dart';
@@ -822,19 +823,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
 
     if (!mounted) return;
+    // Re-locate the row: another delete that finished during the await
+    // above may have shifted it, and removing by the stale index would drop
+    // the wrong recording.
+    final currentIndex = _recordings.indexWhere((d) => d.id == docId);
+    final undoIndex = currentIndex == -1 ? index : currentIndex;
     setState(() {
-      _recordings.removeAt(index);
-      if (_totalCount > 0) _totalCount--;
+      if (currentIndex != -1) {
+        _recordings.removeAt(currentIndex);
+        if (_totalCount > 0) _totalCount--;
+      }
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Recording deleted'),
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () => _undoDelete(docId, removedData, index),
-        ),
+    // a1-3: replaces any earlier "Recording deleted" SnackBar instead of
+    // queueing behind it, so the Undo on screen always restores THIS
+    // deletion (docId, removedData and undoIndex are captured per call).
+    showActionSnackBar(
+      context,
+      content: const Text('Recording deleted'),
+      duration: const Duration(seconds: 4),
+      action: SnackBarAction(
+        label: 'Undo',
+        onPressed: () => _undoDelete(docId, removedData, undoIndex),
       ),
     );
   }
