@@ -179,12 +179,19 @@ service cloud.firestore {
       //      owner's readings (profile_sync_service.dart:64-84), as does
       //      clear-history's batch delete (settings_screen_enhanced.dart:1071)
       //      and single-row delete (firebase_service.dart:301).
-      // FIX (adversarial review, 2026-09-09): the ownership test alone
-      // constrains only the PRE-write document, so an owner could reassign
-      // their own reading to an ARBITRARY uid — planting data attributed to
-      // another user. The incoming userId must therefore either stay
-      // unchanged, or become a 'deleted_user_*' value (the one legitimate
-      // rewrite, performed by delete-account anonymization).
+      // FIX (adversarial review, 2026-09-09; pinned by dashboard audit
+      // sec-3): the ownership test alone constrains only the PRE-write
+      // document, so an owner could reassign their own reading to an
+      // ARBITRARY uid — planting data attributed to another user. The
+      // incoming userId must therefore either stay unchanged, or take the
+      // EXACT value delete-account anonymization writes:
+      // 'deleted_user_' + the first 8 characters of the CALLER's own uid,
+      // with userEmail 'Deleted User' and no other field changed. The old
+      // 'deleted_user_*' pattern let an owner file a reading under ANOTHER
+      // user's deleted-account bucket or mint arbitrary ids, and rewrite
+      // dB, time and position in the same write. The anonymization branch
+      // skips validReading() on purpose, so every legacy document stays
+      // anonymizable.
       // VALIDATION (dashboard audit sec-1): a same-userId update must either
       // change nothing but the author label `userEmail` (email propagation),
       // or leave a document that passes validReading(). An identical-data
@@ -197,7 +204,11 @@ service cloud.firestore {
         && ((request.resource.data.userId == resource.data.userId
              && (isAuthorLabelOnlyUpdate()
                  || validReading(request.resource.data)))
-            || request.resource.data.userId.matches('^deleted_user_.*'));
+            || (request.resource.data.userId
+                  == ('deleted_user_' + request.auth.uid[0:8])
+                && request.resource.data.get('userEmail', null) == 'Deleted User'
+                && request.resource.data.diff(resource.data).affectedKeys()
+                     .hasOnly(['userId', 'userEmail'])));
 
       allow delete: if isSignedIn()
         && resource.data.userId == request.auth.uid;
