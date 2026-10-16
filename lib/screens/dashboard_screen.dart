@@ -17,6 +17,7 @@ import '../utils/noise_stats.dart';
 import '../utils/classify_then_save.dart';
 import '../widgets/decibel_meter_gauge.dart';
 import '../widgets/noise_history_chart.dart';
+import '../widgets/recording_stop_bar.dart';
 import '../widgets/sync_status_indicator.dart';
 import 'settings_screen_enhanced.dart';
 import 'splash_screen.dart';
@@ -1239,7 +1240,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           ),
         ),
       ),
-      bottomNavigationBar: null,
+      // a1-5: while recording, pin a compact Stop control below the
+      // scrolling content. The classification card pushes the round button
+      // below the fold, and Stop must never need a scroll to reach.
+      bottomNavigationBar:
+          _isRecording ? RecordingStopBar(onStop: _stopRecording) : null,
     );
   }
 
