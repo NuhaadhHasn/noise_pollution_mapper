@@ -74,5 +74,40 @@ void main() {
     expect(find.text('Secure payment processed by PayPal'), findsOneWidget);
     expect(find.text('Support via Buy Me a Coffee'), findsOneWidget);
     expect(find.text('Alternative donation method'), findsOneWidget);
+    // Business-email link: PayPal honours the amount, so the picker stays.
+    expect(find.text(r'$5'), findsOneWidget);
+    expect(find.text(r'$10'), findsOneWidget);
+    expect(find.text(r'$20'), findsOneWidget);
+    expect(find.text('Custom'), findsOneWidget);
+    expect(find.text('Support with PayPal'), findsNothing);
+  });
+
+  testWidgets('a hosted Donate button gets one PayPal button, no picker',
+      (tester) async {
+    // The hosted page has its own preset amounts and ignores `amount`.
+    DonationService.applyRemoteConfig({
+      'paypalEnabled': true,
+      'paypalHostedButtonId': 'ABCDEF123456',
+      'buyMeACoffeeUrl': 'https://www.buymeacoffee.com/example',
+    });
+
+    await pumpDonationScreen(tester);
+
+    expect(find.text('Support with PayPal'), findsOneWidget);
+    expect(
+      find.text("One-time or monthly, any amount. You'll choose the amount "
+          "on PayPal's secure page."),
+      findsOneWidget,
+    );
+    expect(find.text('Donate with PayPal'), findsOneWidget);
+    expect(find.text('Secure payment processed by PayPal'), findsOneWidget);
+    // No amount picker.
+    expect(find.text('Select Donation Amount'), findsNothing);
+    expect(find.text(r'$5'), findsNothing);
+    expect(find.text(r'$10'), findsNothing);
+    expect(find.text(r'$20'), findsNothing);
+    expect(find.text('Custom'), findsNothing);
+    // Buy Me a Coffee is still offered as the alternative.
+    expect(find.text('Alternative donation method'), findsOneWidget);
   });
 }

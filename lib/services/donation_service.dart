@@ -214,8 +214,10 @@ class DonationService {
     return null;
   }
 
-  /// Show thank you dialog
-  static void showThankYouDialog(BuildContext context, double amount) {
+  /// Show thank you dialog. A null [amount] (chosen on PayPal and not
+  /// reported back) gets a generic thank-you with no figure and no impact
+  /// line.
+  static void showThankYouDialog(BuildContext context, double? amount) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -244,27 +246,32 @@ class DonationService {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Your \$${amount.toStringAsFixed(2)} donation helps us continue development!',
+                  amount == null
+                      ? 'Thank you for your donation! Your support helps '
+                          'keep Noise Pollution Mapper free.'
+                      : 'Your \$${amount.toStringAsFixed(2)} donation helps us continue development!',
                   style: Theme.of(context).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green.shade200),
-                  ),
-                  child: Text(
-                    getImpactMessage(amount),
-                    style: TextStyle(
-                      color: Colors.green.shade800,
-                      fontWeight: FontWeight.w500,
+                if (amount != null) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green.shade200),
                     ),
-                    textAlign: TextAlign.center,
+                    child: Text(
+                      getImpactMessage(amount),
+                      style: TextStyle(
+                        color: Colors.green.shade800,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

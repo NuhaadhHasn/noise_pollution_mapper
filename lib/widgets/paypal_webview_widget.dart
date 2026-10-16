@@ -9,7 +9,9 @@ import '../services/donation_service.dart';
 /// PayPal Donation WebView
 /// Opens PayPal donation page in embedded WebView
 class PayPalWebViewWidget extends StatefulWidget {
-  final double amount;
+  /// The amount picked in the app, or null when the donor chooses it on
+  /// PayPal's page (a hosted Donate button, which ignores an amount).
+  final double? amount;
   final String currency;
 
   const PayPalWebViewWidget({
@@ -176,7 +178,7 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
                     setState(() {
                       _paymentComplete = true;
                     });
-                    _onPaymentSuccess();
+                    _onPaymentSuccess(uri);
                   }
                   return NavigationActionPolicy.CANCEL;
                 }
@@ -331,13 +333,25 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
     );
   }
 
-  void _onPaymentSuccess() {
-    AppLogger.info('PayPal payment completed');
-    DonationService.recordDonation(widget.amount);
-    
+  /// Prefers the amount PayPal reports on the return URL (`amt`, when it
+  /// sends one) over the app's pick. With neither, as on a hosted Donate
+  /// page that does not report it, the amount is unknown: nothing is added
+  /// to the local total rather than an invented figure, and the thank-you
+  /// is the generic one.
+  void _onPaymentSuccess(Uri? returnUri) {
+    final amount = PaymentUrlUtils.returnedAmount(returnUri) ?? widget.amount;
+    if (amount != null) {
+      AppLogger.info('PayPal payment completed');
+      DonationService.recordDonation(amount);
+    } else {
+      AppLogger.info(
+          'PayPal payment completed; amount chosen on PayPal and not '
+          'returned, so not added to the local total');
+    }
+
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
-        DonationService.showThankYouDialog(context, widget.amount);
+        DonationService.showThankYouDialog(context, amount);
       }
     });
   }

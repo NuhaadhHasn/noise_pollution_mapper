@@ -109,6 +109,63 @@ void main() {
           PaymentUrlUtils.cancelReturnUrl);
       expect(PaymentUrlUtils.isAllowedPaymentHost(uri), isTrue);
     });
+
+    test('a null amount is left out, so the donor picks it on PayPal', () {
+      // The hosted Donate page is preset-amount and ignores `amount`.
+      final uri = Uri.parse(PaymentUrlUtils.buildPayPalDonationUrl(
+        business: '',
+        amount: null,
+        currency: 'USD',
+        sandbox: false,
+        hostedButtonId: 'ABCDEF123456',
+      ));
+      expect(uri.queryParameters.containsKey('amount'), isFalse);
+      expect(uri.queryParameters['hosted_button_id'], 'ABCDEF123456');
+      expect(uri.queryParameters.containsKey('cmd'), isFalse);
+      expect(uri.queryParameters['currency_code'], 'USD');
+      expect(uri.queryParameters['return'], PaymentUrlUtils.returnUrl);
+      expect(uri.queryParameters['cancel_return'],
+          PaymentUrlUtils.cancelReturnUrl);
+      expect(uri.queryParameters['rm'], '0');
+    });
+  });
+
+  group('PaymentUrlUtils.returnedAmount', () {
+    double? amt(String query) => PaymentUrlUtils.returnedAmount(
+        Uri.parse('${PaymentUrlUtils.returnUrl}?$query'));
+
+    test('reads a valid amt from the success return', () {
+      expect(amt('tx=1AB23456&st=Completed&amt=10.00&cc=USD'), 10.0);
+      expect(amt('amt=25'), 25.0);
+      expect(amt('amt=0.5'), 0.5);
+      expect(amt('amt=10000'), 10000.0);
+    });
+
+    test('is null when amt is missing', () {
+      expect(amt('tx=1AB23456&st=Completed'), isNull);
+      expect(
+          PaymentUrlUtils.returnedAmount(Uri.parse(PaymentUrlUtils.returnUrl)),
+          isNull);
+      expect(PaymentUrlUtils.returnedAmount(null), isNull);
+    });
+
+    test('is null for garbage', () {
+      expect(amt('amt='), isNull);
+      expect(amt('amt=abc'), isNull);
+      expect(amt('amt=10,00'), isNull);
+      expect(amt('amt=NaN'), isNull);
+      expect(amt('amt=Infinity'), isNull);
+      // Not valid UTF-8 once decoded: queryParameters would throw.
+      expect(amt('amt=%E0%A4%A'), isNull);
+    });
+
+    test('is null for negative, zero and huge values', () {
+      expect(amt('amt=-5.00'), isNull);
+      expect(amt('amt=0'), isNull);
+      expect(amt('amt=0.00'), isNull);
+      expect(amt('amt=10000.01'), isNull);
+      expect(amt('amt=1e9'), isNull);
+    });
   });
 
   group('PaymentUrlUtils.isAllowedPaymentHost — scheme', () {

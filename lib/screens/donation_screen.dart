@@ -40,12 +40,16 @@ class _DonationScreenState extends State<DonationScreen> {
     super.dispose();
   }
 
-  Future<void> _processPayPalDonation(double amount) async {
+  /// [amount] is null for a hosted Donate button: the donor picks it on
+  /// PayPal's page, so there is nothing to validate here.
+  Future<void> _processPayPalDonation(double? amount) async {
     // Validate amount
-    final error = DonationService.getValidationError(amount);
-    if (error != null) {
-      DonationService.showErrorSnackBar(context, error);
-      return;
+    if (amount != null) {
+      final error = DonationService.getValidationError(amount);
+      if (error != null) {
+        DonationService.showErrorSnackBar(context, error);
+        return;
+      }
     }
 
     await DonationService.ensureConfigLoaded();
@@ -126,8 +130,14 @@ class _DonationScreenState extends State<DonationScreen> {
             const SizedBox(height: 16),
 
             if (payPalEnabled) ...[
-              // PayPal: amounts, "Donate with PayPal" and its note
-              _buildDonationOptionsCard(isDark, primaryColor),
+              // PayPal. A hosted Donate button's page has its own preset
+              // amounts and ignores one sent in the link, so it gets a
+              // single button. The business-email link honours the amount,
+              // so it keeps the picker.
+              if (DonationService.paypalHostedButtonId.isNotEmpty)
+                _buildHostedPayPalCard()
+              else
+                _buildDonationOptionsCard(isDark, primaryColor),
 
               const SizedBox(height: 16),
 
@@ -375,55 +385,110 @@ class _DonationScreenState extends State<DonationScreen> {
           const SizedBox(height: 24),
           
           // Donate button
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                double amount;
-                if (_isCustomAmount) {
-                  amount = _customAmountValue ?? 0;
-                } else {
-                  amount = double.tryParse(_selectedAmount ?? '0') ?? 0;
-                }
-                _processPayPalDonation(amount);
-              },
-              icon: const Icon(Icons.favorite, size: 24),
-              label: Text(
-                'Donate with PayPal',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue.shade600,
-                foregroundColor: Colors.white,
-                elevation: 4,
-                shadowColor: Colors.blue.withValues(alpha: 0.4),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ),
-          
+          _buildPayPalButton(() {
+            double amount;
+            if (_isCustomAmount) {
+              amount = _customAmountValue ?? 0;
+            } else {
+              amount = double.tryParse(_selectedAmount ?? '0') ?? 0;
+            }
+            _processPayPalDonation(amount);
+          }),
+
           const SizedBox(height: 8),
-          
+
           // Security note
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock_outline, size: 14, color: Colors.grey.shade500),
-              const SizedBox(width: 4),
-              Text(
-                'Secure payment processed by PayPal',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey.shade500,
-                ),
-              ),
-            ],
+          _buildPayPalSecurityNote(),
+        ],
+      ),
+    );
+  }
+
+  /// The PayPal card for a hosted Donate button. Its page offers preset
+  /// amounts (one-time, monthly or yearly) and ignores an amount in the
+  /// link, so the donor chooses there and the app shows one button.
+  Widget _buildHostedPayPalCard() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: ThemeHelper.getCardColor(context),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Support with PayPal',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: ThemeHelper.getTextColor(context),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "One-time or monthly, any amount. You'll choose the amount on "
+            "PayPal's secure page.",
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: ThemeHelper.getSecondaryTextColor(context),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildPayPalButton(() => _processPayPalDonation(null)),
+          const SizedBox(height: 8),
+          _buildPayPalSecurityNote(),
+        ],
+      ),
+    );
+  }
+
+  /// "Donate with PayPal", shared by both PayPal cards.
+  Widget _buildPayPalButton(VoidCallback onPressed) {
+    return SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: const Icon(Icons.favorite, size: 24),
+        label: Text(
+          'Donate with PayPal',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.blue.shade600,
+          foregroundColor: Colors.white,
+          elevation: 4,
+          shadowColor: Colors.blue.withValues(alpha: 0.4),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The "Secure payment processed by PayPal" note under the button.
+  Widget _buildPayPalSecurityNote() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.lock_outline, size: 14, color: Colors.grey.shade500),
+        const SizedBox(width: 4),
+        Text(
+          'Secure payment processed by PayPal',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade500,
+          ),
+        ),
+      ],
     );
   }
 

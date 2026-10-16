@@ -59,10 +59,13 @@ class PaymentUrlUtils {
   /// `hosted_button_id` it switches PayPal to the legacy flow, which ignores
   /// the button and fails with webscrErrorCode NO_BUSINESS (live-tested
   /// 2026-10-17).
+  /// A null [amount] leaves `amount` out, so PayPal asks the donor. A hosted
+  /// Donate button is a preset-amount page that ignores `amount` anyway
+  /// (live page state: "donationAmount":"", "donationAmountType":"preset").
   /// Uri.queryParameters percent-encodes the business email.
   static String buildPayPalDonationUrl({
     required String business,
-    required double amount,
+    required double? amount,
     required String currency,
     required bool sandbox,
     String hostedButtonId = '',
@@ -78,13 +81,32 @@ class PaymentUrlUtils {
         if (hosted) 'hosted_button_id': hostedButtonId,
         if (!hosted) 'business': business,
         if (!hosted) 'item_name': 'Donation to Noise Pollution Mapper',
-        'amount': amount.toStringAsFixed(2),
+        if (amount != null) 'amount': amount.toStringAsFixed(2),
         'currency_code': currency,
         'return': returnUrl,
         'cancel_return': cancelReturnUrl,
         'rm': '0',
       },
     ).toString();
+  }
+
+  /// The amount PayPal reports on a success return, from its `amt` query
+  /// parameter. Some PayPal flows append amt/cc/st/tx to the return URL, but
+  /// this is not guaranteed, so null means "unknown", never zero. Only a
+  /// finite number with 0 < amt <= 10000 is accepted; anything else is
+  /// treated as unknown rather than recorded.
+  static double? returnedAmount(Uri? uri) {
+    String? raw;
+    try {
+      raw = uri?.queryParameters['amt'];
+    } on FormatException {
+      // A percent-escape that is not valid UTF-8 makes queryParameters throw.
+      return null;
+    }
+    if (raw == null) return null;
+    final amt = double.tryParse(raw.trim());
+    if (amt == null || !amt.isFinite || amt <= 0 || amt > 10000) return null;
+    return amt;
   }
 
   /// Strips a single trailing slash so `/donate/success` and
