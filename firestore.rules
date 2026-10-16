@@ -83,18 +83,74 @@ service cloud.firestore {
       //        heatmap range query (firebase_service.dart:246),
       //        dashboard today-count stream (dashboard_screen.dart:1171),
       //        full-collection fetch (firebase_service.dart:319).
-      //   DASHBOARD (browser): full-collection onSnapshot
-      //        (src/pages/DashboardPage.tsx:33) and the IndexedDB sync that
-      //        fetches ALL readings with no userId filter
-      //        (src/utils/syncManager.ts — MAX_INITIAL_READINGS = 0 — plus
-      //        forceFullSync and the delta `timestamp >` query).
+      //   DASHBOARD (browser): the IndexedDB sync in src/utils/syncManager.ts
+      //        reads ALL readings with no userId filter — a full
+      //        orderBy('timestamp') fetch plus a `timestamp >` delta query.
       // Because this single grant already covers every dashboard read here,
-      // noise_readings needs NO isAdmin() clause — that is why the dashboard's
-      // "admins can read all readings" clause is dropped rather than merged.
+      // noise_readings needs NO admin clause.
       // Privacy note (sec-2): this collection is deliberately world-readable
       // to signed-in users, which is why the app stores only a MASKED author
       // label in `userEmail`, never a raw address.
       allow read: if isSignedIn();
+
+      // WRITE VALIDATION (dashboard audit sec-1). Signup is open, so every
+      // field of every reading is attacker-controlled, and the dashboard
+      // renders these documents for every viewer. validReading(d) checks the
+      // WHOLE document a write would leave behind:
+      //   * only the 12 keys the app writes, nothing else;
+      //   * decibelLevel a number in [0, 200]; latitude a number in
+      //     [-90, 90]; longitude a number in [-180, 180];
+      //   * timestamp a Timestamp no later than request.time + 1 day. The
+      //     online path writes serverTimestamp() (equal to request.time); the
+      //     offline path writes the capture time, which may be days old, or
+      //     slightly ahead on a device whose clock runs fast;
+      //   * optional fields typed and size-capped: userEmail (the masked
+      //     author label, at most 120 chars, or null because the offline
+      //     path can write null), locationName (200), deviceInfo (64),
+      //     soundClass (any string up to 64, so a new app category such as
+      //     Quiet needs no rules change), soundType ('Pollution' or
+      //     'Ambient'), confidence (a number in [0, 1]), createdAt (a
+      //     Timestamp).
+      // Writing a NEW key (e.g. a future syncedAt) needs this list extended
+      // first, mirrored to the dashboard copy and deployed.
+      function validReading(d) {
+        return d.keys().hasOnly(['userId', 'userEmail', 'decibelLevel',
+              'latitude', 'longitude', 'locationName', 'timestamp',
+              'createdAt', 'deviceInfo', 'soundClass', 'soundType',
+              'confidence'])
+          && d.decibelLevel is number
+          && d.decibelLevel >= 0 && d.decibelLevel <= 200
+          && d.latitude is number
+          && d.latitude >= -90 && d.latitude <= 90
+          && d.longitude is number
+          && d.longitude >= -180 && d.longitude <= 180
+          && d.timestamp is timestamp
+          && d.timestamp <= request.time + duration.value(1, 'd')
+          && (d.get('userEmail', null) == null
+              || (d.userEmail is string && d.userEmail.size() <= 120))
+          && (!('locationName' in d)
+              || (d.locationName is string && d.locationName.size() <= 200))
+          && (!('deviceInfo' in d)
+              || (d.deviceInfo is string && d.deviceInfo.size() <= 64))
+          && (!('soundClass' in d)
+              || (d.soundClass is string && d.soundClass.size() <= 64))
+          && (!('soundType' in d) || d.soundType in ['Pollution', 'Ambient'])
+          && (!('confidence' in d)
+              || (d.confidence is number
+                  && d.confidence >= 0 && d.confidence <= 1))
+          && (!('createdAt' in d) || d.createdAt is timestamp);
+      }
+
+      // Email propagation (profile_sync_service.dart) batch-updates ONLY the
+      // author label on the owner's readings. It deliberately skips
+      // validReading(), so documents written before validation existed stay
+      // updatable.
+      function isAuthorLabelOnlyUpdate() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['userEmail'])
+          && request.resource.data.get('userEmail', null) is string
+          && request.resource.data.userEmail.size() <= 120;
+      }
 
       // CREATE: APP only (the dashboard browser performs zero writes — no
       // setDoc/addDoc/updateDoc/deleteDoc anywhere in its src/).
@@ -103,9 +159,11 @@ service cloud.firestore {
       // (sync_service.dart:338), plus the history undo/restore re-write
       // (firebase_service.dart:308 set() on a deleted id, which lands as a
       // create). Document must be stamped with the caller's own uid.
+      // The document must also pass validReading() (sec-1).
       allow create: if isSignedIn()
         && request.resource.data.userId is string
-        && request.resource.data.userId == request.auth.uid;
+        && request.resource.data.userId == request.auth.uid
+        && validReading(request.resource.data);
 
       // UPDATE/DELETE: owner of the EXISTING document — resource.data, NOT
       // request.resource.data. This is load-bearing in three places and MUST
@@ -127,10 +185,18 @@ service cloud.firestore {
       // another user. The incoming userId must therefore either stay
       // unchanged, or become a 'deleted_user_*' value (the one legitimate
       // rewrite, performed by delete-account anonymization).
+      // VALIDATION (dashboard audit sec-1): a same-userId update must either
+      // change nothing but the author label `userEmail` (email propagation),
+      // or leave a document that passes validReading(). An identical-data
+      // retry of an offline upload passes one of the two tests; the
+      // email-only test skips validReading() on purpose, so documents
+      // written before validation existed stay updatable.
       allow update: if isSignedIn()
         && resource.data.userId == request.auth.uid
         && request.resource.data.userId is string
-        && (request.resource.data.userId == resource.data.userId
+        && ((request.resource.data.userId == resource.data.userId
+             && (isAuthorLabelOnlyUpdate()
+                 || validReading(request.resource.data)))
             || request.resource.data.userId.matches('^deleted_user_.*'));
 
       allow delete: if isSignedIn()
