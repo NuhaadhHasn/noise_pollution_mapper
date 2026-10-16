@@ -304,15 +304,35 @@ class SyncService {
 
   /// Save a single recording to Firebase
   Future<void> _saveToFirebase(OfflineRecording recording, String userId) async {
-    final data = <String, dynamic>{
-      'userId': userId,
+    final data = offlineReadingData(
+      recording,
+      userId: userId,
       // Privacy (priv-6): never upload a raw email. Legacy queue entries
       // carry no label or a raw one; both are masked like the online path.
-      'userEmail': FirebaseService.queuedAuthorLabel(
+      userEmail: FirebaseService.queuedAuthorLabel(
         recording.userEmail,
         displayName: _auth.currentUser?.displayName,
         email: _auth.currentUser?.email,
       ),
+    );
+
+    // Deterministic document ID (offline-4/flow5-3): recording.id is unique
+    // per reading, so a retry after a lost ack overwrites the same document
+    // instead of creating a duplicate.
+    await _firestore.collection('noise_readings').doc(recording.id).set(data);
+  }
+
+  /// The noise_readings document an offline upload writes, first write and
+  /// retry alike. Pure, for tests. The classification keys are added only
+  /// when non-null.
+  static Map<String, dynamic> offlineReadingData(
+    OfflineRecording recording, {
+    required String userId,
+    required String userEmail,
+  }) {
+    final data = <String, dynamic>{
+      'userId': userId,
+      'userEmail': userEmail,
       'decibelLevel': recording.decibelLevel,
       'latitude': recording.latitude,
       'longitude': recording.longitude,
@@ -324,6 +344,11 @@ class SyncService {
       // heatmap. createdAt keeps the client DateTime per the dual-write
       // convention, so readers that handle both fields stay correct.
       'timestamp': Timestamp.fromDate(recording.timestamp),
+      // data-1: because `timestamp` above is back-dated to the capture
+      // time, the web dashboard finds this upload by its SERVER upload
+      // time instead. A retry re-stamps it; the rules accept no value but
+      // serverTimestamp() (see FirebaseService.withSyncedAt).
+      'syncedAt': FieldValue.serverTimestamp(),
       'createdAt': recording.timestamp,
       'deviceInfo': 'Mobile Device',
     };
@@ -339,10 +364,7 @@ class SyncService {
       data['confidence'] = recording.confidence;
     }
 
-    // Deterministic document ID (offline-4/flow5-3): recording.id is unique
-    // per reading, so a retry after a lost ack overwrites the same document
-    // instead of creating a duplicate.
-    await _firestore.collection('noise_readings').doc(recording.id).set(data);
+    return data;
   }
 
   /// Manually trigger sync (user-initiated). Explicit user intent resets

@@ -178,21 +178,54 @@ class FirebaseService {
     double? confidence,
     required String userId,
   }) async {
-    final data = {
-      'userId': userId,
+    final data = onlineReadingData(
+      userId: userId,
       // Privacy (sec-2): never store the raw email in the shared collection.
       // Field name kept as 'userEmail' for reader compatibility
       // (community_feed_screen.dart displays and re-masks it harmlessly).
-      'userEmail': authorLabel(
+      userEmail: authorLabel(
         displayName: _auth.currentUser?.displayName,
         email: _auth.currentUser?.email,
       ),
+      decibelLevel: decibelLevel,
+      latitude: latitude,
+      longitude: longitude,
+      locationName: locationName,
+      soundClass: soundClass,
+      soundType: soundType,
+      confidence: confidence,
+      createdAt: DateTime.now(),
+    );
+
+    await _firestore.collection('noise_readings').add(data);
+  }
+
+  /// The noise_readings document the online save writes. Pure, for tests.
+  /// The classification keys are added only when non-null.
+  static Map<String, dynamic> onlineReadingData({
+    required String userId,
+    required String userEmail,
+    required double decibelLevel,
+    required double latitude,
+    required double longitude,
+    String? locationName,
+    String? soundClass,
+    String? soundType,
+    double? confidence,
+    required DateTime createdAt,
+  }) {
+    final data = <String, dynamic>{
+      'userId': userId,
+      'userEmail': userEmail,
       'decibelLevel': decibelLevel,
       'latitude': latitude,
       'longitude': longitude,
       'locationName': locationName ?? 'Unknown Location',
       'timestamp': FieldValue.serverTimestamp(),
-      'createdAt': DateTime.now(),
+      // data-1: the server upload time, the web dashboard's sync cursor.
+      // The rules accept no value but serverTimestamp() (see withSyncedAt).
+      'syncedAt': FieldValue.serverTimestamp(),
+      'createdAt': createdAt,
       'deviceInfo': 'Mobile Device',
     };
 
@@ -200,8 +233,18 @@ class FirebaseService {
     if (soundType != null) data['soundType'] = soundType;
     if (confidence != null) data['confidence'] = confidence;
 
-    await _firestore.collection('noise_readings').add(data);
+    return data;
   }
+
+  /// data-1: [data] stamped with `syncedAt` = serverTimestamp(), the SERVER
+  /// upload time. `timestamp` is the capture time, and offline uploads and
+  /// restores carry an old one, so the web dashboard's delta sync uses
+  /// syncedAt to find every write. firestore.rules accepts syncedAt only
+  /// when it equals request.time, so any syncedAt already in [data] (a
+  /// restored reading's original) is replaced, never re-sent. Returns a new
+  /// map; [data] is left unchanged.
+  static Map<String, dynamic> withSyncedAt(Map<String, dynamic> data) =>
+      <String, dynamic>{...data, 'syncedAt': FieldValue.serverTimestamp()};
 
   /// Save to offline queue (offline mode)
   Future<void> _saveOffline({
@@ -323,10 +366,15 @@ class FirebaseService {
   }
 
   // Restore a previously deleted reading (undo support). Re-writes the
-  // original document data verbatim under the same id, preserving the
-  // original timestamp/createdAt pair (project convention: dual timestamps).
+  // original document data under the same id, preserving the original
+  // timestamp/createdAt pair (project convention: dual timestamps). Only
+  // syncedAt is re-stamped (data-1): the rules reject the original value,
+  // and a fresh upload time lets the web dashboard re-fetch the reading.
   Future<void> restoreNoiseReading(String docId, Map<String, dynamic> data) {
-    return _firestore.collection('noise_readings').doc(docId).set(data);
+    return _firestore
+        .collection('noise_readings')
+        .doc(docId)
+        .set(withSyncedAt(data));
   }
 
   // Get readings by location (for specific city)
