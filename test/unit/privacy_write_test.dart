@@ -48,4 +48,45 @@ void main() {
           'Anonymous');
     });
   });
+
+  group('FirebaseService.queuedAuthorLabel (priv-6)', () {
+    test('keeps a label queued by a current build', () {
+      expect(FirebaseService.queuedAuthorLabel('own***@example.org'),
+          'own***@example.org');
+      expect(FirebaseService.queuedAuthorLabel('Owner'), 'Owner');
+      expect(FirebaseService.queuedAuthorLabel('Anonymous'), 'Anonymous');
+    });
+
+    test('masks the signed-in user when a legacy entry has no label', () {
+      expect(
+        FirebaseService.queuedAuthorLabel(null,
+            displayName: null, email: 'owner@example.org'),
+        'own***@example.org',
+      );
+      expect(
+        FirebaseService.queuedAuthorLabel('  ',
+            displayName: 'Owner', email: 'owner@example.org'),
+        'Owner',
+      );
+      expect(FirebaseService.queuedAuthorLabel(null), 'Anonymous');
+    });
+
+    test('masks a raw email queued by a legacy build', () {
+      expect(
+        FirebaseService.queuedAuthorLabel('someone@example.com',
+            displayName: 'Owner', email: 'owner@example.org'),
+        'som***@example.com',
+      );
+    });
+
+    test('never returns the raw auth email', () {
+      const raw = 'someone@example.com';
+      for (final queued in <String?>[null, '', raw]) {
+        final label = FirebaseService.queuedAuthorLabel(queued,
+            displayName: null, email: raw);
+        expect(label, isNot(raw));
+        expect(label, contains('***'));
+      }
+    });
+  });
 }

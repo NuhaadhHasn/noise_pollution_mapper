@@ -3,6 +3,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/offline_recording.dart';
+import 'firebase_service.dart';
 import 'offline_storage_service.dart';
 import '../utils/app_logger.dart';
 
@@ -305,7 +306,13 @@ class SyncService {
   Future<void> _saveToFirebase(OfflineRecording recording, String userId) async {
     final data = <String, dynamic>{
       'userId': userId,
-      'userEmail': recording.userEmail ?? _auth.currentUser?.email,
+      // Privacy (priv-6): never upload a raw email. Legacy queue entries
+      // carry no label or a raw one; both are masked like the online path.
+      'userEmail': FirebaseService.queuedAuthorLabel(
+        recording.userEmail,
+        displayName: _auth.currentUser?.displayName,
+        email: _auth.currentUser?.email,
+      ),
       'decibelLevel': recording.decibelLevel,
       'latitude': recording.latitude,
       'longitude': recording.longitude,

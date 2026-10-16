@@ -37,6 +37,27 @@ class FirebaseService {
     return '$prefix***@${parts.sublist(1).join('@')}';
   }
 
+  /// Author label for a queued offline reading at upload time (priv-6).
+  /// Current builds queue the masked [authorLabel] already. Legacy queue
+  /// entries hold either null (written before userEmail was queued) or a raw
+  /// email (written before the queue was masked). Neither may reach the
+  /// shared collection unmasked, so a missing label falls back to
+  /// [authorLabel] for the signed-in user, and a raw-looking email is masked.
+  static String queuedAuthorLabel(
+    String? queued, {
+    String? displayName,
+    String? email,
+  }) {
+    final label = queued?.trim();
+    if (label == null || label.isEmpty) {
+      return authorLabel(displayName: displayName, email: email);
+    }
+    if (label.contains('@') && !label.contains('***@')) {
+      return authorLabel(email: label);
+    }
+    return label;
+  }
+
   // Save noise reading to Firestore (with optional sound classification data).
   // Automatically handles offline mode by queuing for later sync.
   // Never throws — returns a SaveOutcome the caller must check (fb-1).
