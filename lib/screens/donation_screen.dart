@@ -52,9 +52,9 @@ class _DonationScreenState extends State<DonationScreen> {
     if (!mounted) return;
 
     // Check if PayPal donation is configured. The button only exists when
-    // isPayPalEnabled, which already requires this; kept as a safety net.
-    if (DonationService.clientId.isEmpty ||
-        DonationService.clientId.contains('your_paypal')) {
+    // isPayPalEnabled; re-checked here as a safety net. It also accepts a
+    // hosted Donate button ID in place of the business email.
+    if (!DonationService.isPayPalEnabled) {
       DonationService.showErrorSnackBar(
         context,
         'PayPal donations are not configured. Please contact the developer.',

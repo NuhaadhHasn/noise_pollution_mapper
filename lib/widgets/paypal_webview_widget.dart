@@ -45,6 +45,7 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
       amount: widget.amount,
       currency: widget.currency,
       sandbox: isSandbox,
+      hostedButtonId: DonationService.paypalHostedButtonId,
     );
 
     AppLogger.info('Opening PayPal: $paypalUrl');
@@ -125,6 +126,26 @@ class _PayPalWebViewWidgetState extends State<PayPalWebViewWidget> {
                 if (urlString.contains('genericError') ||
                     urlString.contains('error')) {
                   AppLogger.warning('PayPal showed error page');
+                }
+
+                // PayPal's Donate page refuses a recipient with a normal
+                // HTTP 200 page, and puts the reason code in its page state:
+                // ACCOUNT_LOCKED / ACCOUNT_RESTRICTED ("currently ineligible
+                // to receive donations"), ACCOUNT_UNILATERAL ("account is
+                // inactive"), INVALID_HOSTED_BUTTON_ID, and so on. Surface it
+                // instead of leaving the donor on a dead end.
+                final code = await controller.evaluateJavascript(
+                  source: r'''(document.documentElement.innerHTML.match(/"webscrErrorCode":"([A-Z_]+)"/)||[])[1]||""''',
+                );
+                if (!mounted) return;
+                if (code is String && code.isNotEmpty) {
+                  AppLogger.warning('PayPal refused the donation link: $code');
+                  setState(() {
+                    _hasError = true;
+                    _errorMessage = "PayPal can't accept donations for this "
+                        'project right now ($code). Please use Buy Me a '
+                        'Coffee instead.';
+                  });
                 }
               },
               onReceivedError: (controller, request, error) {

@@ -44,26 +44,36 @@ class PaymentUrlUtils {
         .any((domain) => host == domain || host.endsWith('.$domain'));
   }
 
-  /// Builds the classic webscr donation URL, including return/cancel_return
-  /// markers. rm=0 makes PayPal send the buyer back via GET so the redirect
-  /// is interceptable by shouldOverrideUrlLoading on Android.
-  /// Uri.queryParameters also percent-encodes the business email, which the
-  /// previous hand-built string never did.
+  /// Builds PayPal's Donate link in the form PayPal's own button generator
+  /// emits (https://www.paypal.com/donate/?...). The legacy
+  /// /cgi-bin/webscr?cmd=_donations URL only 302-redirects here with every
+  /// parameter kept, so this saves a hop on the deprecated endpoint.
+  /// return/cancel_return are the completion markers. rm=0 makes PayPal
+  /// send the donor back via GET, so the redirect is interceptable by
+  /// shouldOverrideUrlLoading on Android.
+  ///
+  /// When [hostedButtonId] is non-empty (a Donate button the owner created
+  /// at paypal.com/donate/buttons), it is sent INSTEAD of `business`.
+  /// PayPal takes one or the other. The button carries its own item name.
+  /// Uri.queryParameters percent-encodes the business email.
   static String buildPayPalDonationUrl({
     required String business,
     required double amount,
     required String currency,
     required bool sandbox,
+    String hostedButtonId = '',
   }) {
     final host = sandbox ? 'www.sandbox.paypal.com' : 'www.paypal.com';
+    final hosted = hostedButtonId.isNotEmpty;
     return Uri(
       scheme: 'https',
       host: host,
-      path: '/cgi-bin/webscr',
+      path: '/donate/',
       queryParameters: <String, String>{
         'cmd': '_donations',
-        'business': business,
-        'item_name': 'Donation to Noise Pollution Mapper',
+        if (hosted) 'hosted_button_id': hostedButtonId,
+        if (!hosted) 'business': business,
+        if (!hosted) 'item_name': 'Donation to Noise Pollution Mapper',
         'amount': amount.toStringAsFixed(2),
         'currency_code': currency,
         'return': returnUrl,

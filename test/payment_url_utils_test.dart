@@ -66,9 +66,10 @@ void main() {
       );
       final uri = Uri.parse(url);
       expect(uri.host, 'www.sandbox.paypal.com');
-      expect(uri.path, '/cgi-bin/webscr');
+      expect(uri.path, '/donate/');
       expect(uri.queryParameters['cmd'], '_donations');
       expect(uri.queryParameters['business'], 'owner@example.com');
+      expect(uri.queryParameters.containsKey('hosted_button_id'), isFalse);
       expect(uri.queryParameters['amount'], '12.50');
       expect(uri.queryParameters['currency_code'], 'USD');
       expect(uri.queryParameters['return'], PaymentUrlUtils.returnUrl);
@@ -85,6 +86,23 @@ void main() {
         sandbox: false,
       );
       expect(Uri.parse(url).host, 'www.paypal.com');
+    });
+
+    test('a hosted Donate button ID replaces business', () {
+      final uri = Uri.parse(PaymentUrlUtils.buildPayPalDonationUrl(
+        business: 'owner@example.com',
+        amount: 5,
+        currency: 'USD',
+        sandbox: false,
+        hostedButtonId: 'ABCDEF123456',
+      ));
+      expect(uri.path, '/donate/');
+      expect(uri.queryParameters['hosted_button_id'], 'ABCDEF123456');
+      expect(uri.queryParameters.containsKey('business'), isFalse);
+      expect(uri.queryParameters['return'], PaymentUrlUtils.returnUrl);
+      expect(uri.queryParameters['cancel_return'],
+          PaymentUrlUtils.cancelReturnUrl);
+      expect(PaymentUrlUtils.isAllowedPaymentHost(uri), isTrue);
     });
   });
 

@@ -102,5 +102,25 @@ void main() {
       });
       expect(DonationService.isPayPalEnabled, isTrue);
     });
+
+    test('is on when enabled with only a hosted Donate button ID', () {
+      DonationService.applyRemoteConfig({
+        'paypalEnabled': true,
+        'paypalHostedButtonId': ' ABCDEF123456 ',
+      });
+      expect(DonationService.paypalHostedButtonId, 'ABCDEF123456');
+      expect(DonationService.isPayPalEnabled, isTrue);
+    });
+
+    test('ignores a malformed hosted button ID', () {
+      for (final id in <Object>['abc/../x', 'lower123456', '', 42]) {
+        DonationService.applyRemoteConfig({
+          'paypalEnabled': true,
+          'paypalHostedButtonId': id,
+        });
+        expect(DonationService.paypalHostedButtonId, '', reason: '$id');
+        expect(DonationService.isPayPalEnabled, isFalse, reason: '$id');
+      }
+    });
   });
 }

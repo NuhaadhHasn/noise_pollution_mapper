@@ -60,21 +60,38 @@ class DonationService {
     return v is bool ? v : true;
   }
 
+  /// Optional hosted Donate button ID (`paypalHostedButtonId` in
+  /// app_config/donations), created at paypal.com/donate/buttons. When set,
+  /// the donate link uses `hosted_button_id` instead of `business`. Public
+  /// by design, like the email. Anything not shaped like a PayPal button ID
+  /// (uppercase alphanumerics) is ignored.
+  static String get paypalHostedButtonId {
+    final v = _remoteConfig?['paypalHostedButtonId'];
+    if (v is! String) return '';
+    final t = v.trim();
+    return RegExp(r'^[A-Z0-9]{6,32}$').hasMatch(t) ? t : '';
+  }
+
   /// Whether the donation screen offers PayPal at all.
   ///
   /// OFF unless `app_config/donations` opts in explicitly: `paypalEnabled`
   /// must be the bool `true` (a missing field, `false`, or a wrong type
-  /// such as the string 'true' all mean off), AND [clientId] must be a
-  /// real business email or merchant ID, not empty or the placeholder.
+  /// such as the string 'true' all mean off), AND there must be a usable
+  /// recipient: a [paypalHostedButtonId], or a [clientId] that is a real
+  /// business email or merchant ID, not empty or the placeholder.
   ///
   /// This is a remote switch, so PayPal can be turned on or off without a
-  /// release. It exists because PayPal currently answers "This
+  /// release. It exists because PayPal's Donate page answers "This
   /// organization is currently ineligible to receive donations" for the
-  /// configured account, a restriction on the account side. The owner
-  /// re-enables it by adding `paypalEnabled: true` in the Firebase console
-  /// once the account can receive money. app_config is client-read-only.
+  /// configured account. The page state carries webscrErrorCode
+  /// ACCOUNT_LOCKED for every link shape, so the cause is on PayPal's side
+  /// (the owner's Sri Lanka account is not enabled for Donate), not in the
+  /// URL. The owner re-enables it by adding `paypalEnabled: true` in the
+  /// Firebase console once they can create a Donate button at
+  /// paypal.com/donate/buttons. app_config is client-read-only.
   static bool get isPayPalEnabled {
     if (_remoteConfig?['paypalEnabled'] != true) return false;
+    if (paypalHostedButtonId.isNotEmpty) return true;
     final email = clientId.trim();
     return email.isNotEmpty && !email.contains('your_paypal');
   }
