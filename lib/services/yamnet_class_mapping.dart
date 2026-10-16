@@ -131,6 +131,9 @@ class YAMNetClassMapping {
   /// Based on YAMNet's AudioSet ontology
   static final Map<String, String> classMapping = {
     // Traffic noise
+    // 'Vehicle' is a BROAD catch-all: a specific class from another
+    // category can replace it (SoundClassificationService
+    // .broadCatchAllClasses).
     'Vehicle': categoryTraffic,
     'Car': categoryTraffic,
     'Motor vehicle (road)': categoryTraffic,
@@ -490,6 +493,8 @@ class YAMNetClassMapping {
     'Lightning': categoryWeather,
     'Breeze': categoryWeather,
     'Gust': categoryWeather,
+    // 'Water' is a BROAD catch-all (parent of Rain): see
+    // SoundClassificationService.broadCatchAllClasses.
     'Water': categoryNature,
     'Stream': categoryNature,
     'Waterfall': categoryNature,

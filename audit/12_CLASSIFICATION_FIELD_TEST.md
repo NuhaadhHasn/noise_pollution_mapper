@@ -164,6 +164,8 @@ Ranked by value. **Status as of 2026-09-11:** items 1, 3 and 5 are closed
 2. **Re-test with clean samples (HIGH).** Replace the train and bird samples;
    rebuild the motorcycle sample without naive looping. Then re-run the 11-sound
    matrix. Until then, 3 of the 4 "failures" are unproven.
+   *Update 2026-10-16:* done with 18 clean, licensed samples. See §7, which
+   also adds the specific-over-broad rule that the results called for.
 3. ✅ **CLOSED — `7512c1f`.** *Surface the Top-3 in a debug view (MEDIUM).*
    The ranked candidates now travel on `ClassificationResult.topPredictions`
    and render on the dashboard behind the `show_classification_debug`
@@ -183,6 +185,9 @@ Ranked by value. **Status as of 2026-09-11:** items 1, 3 and 5 are closed
    instead of `Tuk-tuk`**. That is the gate working as designed — which of
    the two wins in that environment is a coin flip — but it does make
    `Tuk-tuk` harder to confirm in the field. Test it away from a road.
+
+   *Superseded 2026-10-16 (§7):* `Vehicle` is now a broad catch-all, so a
+   `Motorcycle` within 0.15 of it reports `Tuk-tuk` instead of `Uncertain`.
 5. ✅ **CLOSED — `76947c2`.** *Document the dB accuracy limitation (MEDIUM).*
    The "uncalibrated estimate" caveat is now disclosed in the app, per §3.
 6. **Calibrate against a reference SPL meter (LOW / optional).** The only way to
@@ -230,3 +235,117 @@ holding:
 - `authorLabel` masking on write; the 3,328-doc backfill holds at 0 raw emails (sec-2)
 - The §4.4 `main_app_shell.dart` merge (both cluster 03 and 05 lines fire)
 - The §4.5 guarded-bootstrap reminder re-sync
+
+---
+
+## 7. 2026-10-16 clean-sample re-test
+
+Closes §4 item 2. This section was added afterwards; §1–§6 above are left as
+written on 2026-09-10/11.
+
+- **Device:** same Galaxy S9+ (SCV39), Android 10 / API 29.
+- **Build:** the debug APK installed for the 2026-10-16 device QA. It had the
+  0.30 threshold and the 0.10 near-tie gate, but not the rule below.
+- **Samples:** 17 clean, licensed recordings from Wikimedia Commons (CC0,
+  CC BY, CC BY-SA or public domain; sources are in the QA scratchpad
+  `sources_set1.json` / `sources_set2.json`), plus a generated 30 s silent
+  file. None is looped. The train and bird samples replace the bad ones
+  from §2.3.
+- **Method:** each clip was played through the phone's own speaker from the
+  Samsung Sound Player pop-up while the app recorded. The Top-3 came from the
+  `🎵 YAMNet Top 3` log line, one row per 5 s window. The last window of most
+  runs comes after playback ended, so it measures the room (often `Speech`, the
+  operator) and is ignored below. A control run had nothing playing.
+
+### 7.1 Results
+
+"Before" is what this build reported per 5 s window. "With §7.2" is the same
+score vectors replayed through the new rule (every logged window was
+replayed; see §7.3).
+
+| Sample | Before (per window) | With §7.2 | What YAMNet scored |
+|---|---|---|---|
+| Train passing (Wirikuta) | Traffic ×3, **Uncertain ×10**, Traffic | Traffic ×3, **Transport ×10**, Traffic | Vehicle 0.89–0.996 vs Rail transport 0.80–0.98, Train next. One window had Rail transport 0.957 over Vehicle 0.941. The first three windows (the approach; Siren/Emergency vehicle in two) stay Traffic |
+| Jawa 350 motorbike | **Uncertain**, Traffic, **Uncertain**, Traffic | **Tuk-tuk**, Traffic, **Tuk-tuk**, Traffic | Vehicle 0.738 / Motorcycle 0.668, then Motorcycle 0.414 / Vehicle 0.332. Two windows have Vehicle 0.586 with Motorcycle 0.172 or more below, outside the margin |
+| Helicopter (Chinook) | Traffic, Traffic, **Uncertain** | Traffic, Traffic, **Transport** | Vehicle 0.50 / Helicopter 0.414 / Aircraft 0.332. Earlier windows: Vehicle with Motorboat or Motorcycle 0.168 or more below |
+| Thunder crack | Uncertain (low), **Uncertain**, Uncertain (low) | Uncertain (low), **Weather**, Uncertain (low) | Thunderstorm = Water = Rain = 0.414 |
+| Rain + thunder | Nature ×3 | Nature ×3 | Water/Waterfall 0.33–0.74, Waves, Ocean. Rain at most 0.332, 0.41 below Water: the rule cannot help |
+| Motorcycles at Praterstern (14.5 s clip) | Speech, Traffic, Uncertain (low) ×2 | unchanged | Vehicle 0.50 / Motor vehicle (road) / Truck. No Motorcycle in the top-3. Later windows (Music) were after the clip ended |
+| Airplane | Traffic ×3 | Traffic ×3 | Vehicle 0.41–0.50, Rail transport/Train at most 0.26. No aircraft class in the top-3 |
+| Crowd | Traffic, Uncertain (low), Speech ×2 | unchanged | First window Vehicle 0.668 / Subway 0.50 (gap 0.168, outside the margin) |
+| Blackbird | Uncertain ×2, Nature, Uncertain, Nature | unchanged | Animal/Bird 0.891; Frog 0.50 |
+| Hammer drill | Construction ×2, Uncertain, Construction | unchanged | Tools/Jackhammer. The Uncertain window is Engine 0.414 = Jackhammer 0.414. Engine is not broad |
+| Chainsaw | Industrial ×3 | unchanged | Light engine / Chainsaw 0.80–0.96 |
+| Milling machine | Traffic, Uncertain (low) ×2 | unchanged | Vehicle 0.20–0.33 |
+| Blender | Construction, Traffic, Uncertain, Construction | unchanged | Tools 0.852; one window Vacuum cleaner 0.50 vs Tools 0.414 |
+| Printer | Uncertain (low), Uncertain, Office | unchanged | Printer 0.50 vs Mechanisms 0.414, then Printer 0.738 |
+| Alarm clock (electronic) | Music ×2 | unchanged | Synthesizer 0.50–0.668 |
+| Alarm clock (mechanical) | Construction, Uncertain (low) | unchanged | Tools 0.332, then Alarm/Buzzer 0.148 |
+| Sewing machine | Uncertain (low) ×4 | unchanged | Nothing reached 0.30 |
+| Silence (30 s silent file), two runs | Uncertain, Traffic, Speech ×2 / Speech, **Uncertain**, Traffic ×2 | unchanged / Speech, **Speech**, Traffic ×2 | The room, not the file. The changed window is Speech 0.332 = Vehicle 0.332. `Silence` never ranked, so `Quiet` never appeared |
+| Control, nothing playing | Traffic ×2, Uncertain (low) ×2 | unchanged | **Vehicle 0.738 (Rail transport 0.332) and 0.801**: this room's baseline |
+
+Read with the control row in mind. In this room, `Vehicle` sits at 0.74–0.80
+with nothing playing, so a sample is only informative if it beats that baseline
+or the rule replaces it.
+
+### 7.2 The rule: prefer the specific class over a broad catch-all
+
+YAMNet's broad class `Vehicle` (mapped to Traffic) fires alongside every
+train, aircraft and motorcycle, and `Water` (Nature) alongside rain. With the
+top-1 plus the 0.10 near-tie gate, **Transport and Tuk-tuk were effectively
+unreachable**: the train was Uncertain in all ten of its windows.
+
+Owner-approved fix, implemented in
+`SoundClassificationService.decideCategory`:
+
+> When the **top** class is a broad catch-all and a **specific** class that maps
+> to a **different** app category is in the top-3, with a score ≥ 0.30 **and**
+> within an absolute **0.15** of the broad class, report the specific class:
+> its category and its own score.
+
+- **Broad set:** `{Vehicle, Water}`, exactly. The justification, including
+  why `Motor vehicle (road)` and `Engine` are left out, is in the doc comment
+  on `SoundClassificationService.broadCatchAllClasses`.
+- **Absolute margin**, like the 0.10 gate, because the 521 scores are
+  independent sigmoids (§2.1 correction).
+- **The strongest specific class decides.** The candidate is the
+  highest-ranked non-broad class in the top-3. If it shares the broad
+  class's category (Vehicle over Car), Traffic is already right and nothing
+  changes.
+- **Mirror case.** A broad runner-up never gates a specific winner. The
+  train had one window with Rail transport 0.957 over Vehicle 0.941. The
+  rule would let Rail transport win from 0.15 *below* Vehicle, so it must
+  also win from above. The same applies to the thunderstorm tie, whichever
+  of the tied classes sorts first.
+- **Unchanged:** the 0.30 threshold on the top-1; the 0.10 gate between two
+  specific classes in different categories (a promoted class is still gated
+  by a competing specific class); the same-category exemption; `Quiet` maps
+  only `Silence`; below-threshold and near-tie results are still saved
+  without a class (`utils/classify_then_save.dart`). A promoted result is
+  saved with the specific class, its category and its own score.
+- **Logged** at debug level when it fires, for example:
+  `Specific over broad: Rail transport (98.4%) over Vehicle (99.6%) -> Transport`.
+  The dashboard's near-tie reason now names the pair the gate actually
+  compared.
+
+### 7.3 Replay and what is still open
+
+All 154 Top-3 lines logged on 2026-10-16 (the 18 samples above plus a
+4.5-minute room recording and two short runs) were replayed through the old and
+the new decision. **15 windows changed, and every one went from `Uncertain` to
+a category:** train ×10 → Transport, Jawa ×2 → Tuk-tuk, helicopter → Transport,
+thunder → Weather, silence run 2 → Speech. **No window that already had a
+category changed.** That includes all 54 windows of the room recording (34
+Traffic, 7 Speech, 3 Music, 10 Uncertain).
+
+Still open:
+
+- **Re-test on device** with this build. These are replayed logs, not live
+  runs; the log line above makes each decision self-explanatory.
+- **Airplane, Praterstern and rain did not move.** YAMNet never put an
+  aircraft class, a motorcycle class or `Rain` close enough to the top, so no
+  ranking rule can rescue them. Re-test at a lower ambient level, or with the
+  phone away from the speaker's low-frequency boom.
+- **Watch `Motor vehicle (road)`.** If a re-test shows it at #1, or within
+  0.10 of a `Motorcycle`, it is the next broad-set candidate.

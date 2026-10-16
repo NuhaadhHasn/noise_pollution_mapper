@@ -54,8 +54,68 @@ class SoundClassificationService {
   /// unless a different-category class also scores within 10pp of them.
   static const double ambiguityMargin = 0.10;
 
+  /// YAMNet classes treated as BROAD catch-alls by [decideCategory]
+  /// (specific-over-broad rule, field test 12 §7).
+  ///
+  /// A class belongs here only if all three hold:
+  /// 1. It is an AudioSet PARENT whose children span several app
+  ///    categories, so its own category is wrong for some of them.
+  /// 2. It fires alongside those children at a similar or higher score,
+  ///    so on top-1 alone it hides them.
+  /// 3. The on-device evidence shows it doing exactly that.
+  ///
+  /// - 'Vehicle' (#294 -> Traffic) is the parent of the road vehicles
+  ///   (Traffic), and also of Motorcycle (Tuk-tuk) and of Rail transport,
+  ///   Aircraft and Boat (Transport). On 2026-10-16 it ranked #1 on a
+  ///   train (0.996 vs Rail transport 0.984), a Jawa motorbike (0.738 vs
+  ///   Motorcycle 0.668) and a helicopter (0.50 vs Helicopter 0.414). It
+  ///   also read 0.74-0.80 in a quiet room with nothing playing. With
+  ///   Vehicle on top, Transport and Tuk-tuk were effectively unreachable.
+  /// - 'Water' (#282 -> Nature) is the parent of Rain, Raindrop and Rain
+  ///   on surface (Weather) as well as Stream, Waterfall and Ocean
+  ///   (Nature). On 2026-10-16 a thunderstorm scored Thunderstorm, Water
+  ///   and Rain at 0.414 each, which read Uncertain.
+  ///
+  /// Deliberately NOT included:
+  /// - 'Motor vehicle (road)' (#300 -> Traffic): Traffic is right for
+  ///   five of its six children (Car, Truck, Bus, Emergency vehicle,
+  ///   Traffic noise). Only Motorcycle differs. Across the 154 windows
+  ///   logged on 2026-10-16 it never ranked #1 and never came within the
+  ///   near-tie margin of a Motorcycle.
+  /// - 'Engine' (#337 -> Traffic): Traffic is the right answer for its
+  ///   commonest input, road vehicles. Its Industrial children ('Light
+  ///   engine', 'Medium engine') are acoustic descriptors that also fire
+  ///   on road traffic, so demoting Engine would let them overrule it.
+  /// - Parents whose children all share their category ('Animal',
+  ///   'Tools', 'Rail transport', 'Aircraft') could never change an
+  ///   outcome. 'Speech' and 'Music' are already the right answer for
+  ///   their common inputs.
+  ///
+  /// Every entry must be an official class name. yamnet_class_map_test
+  /// checks that against the bundled CSV.
+  static const Set<String> broadCatchAllClasses = {'Vehicle', 'Water'};
+
+  /// How far (absolute) a SPECIFIC class may score below a broad top-1
+  /// and still be reported instead of it. See [decideCategory].
+  ///
+  /// Absolute for the same reason as [ambiguityMargin]: the scores are
+  /// independent sigmoids, not shares of one probability mass.
+  ///
+  /// Value: 0.15. Any pair within 0.10 was already a near-tie (Uncertain),
+  /// so the rule turns those into the specific class. It also covers the
+  /// 0.10-0.15 band, where the broad class used to win outright. The
+  /// logged scores sit on a discrete ladder whose steps are 0.07-0.09 apart
+  /// between 0.26 and 0.74. In that band, 0.15 admits a specific class
+  /// one step below the broad class but not two. So Vehicle 0.668 vs
+  /// Subway 0.50 (gap 0.168) stays Traffic, while Vehicle 0.738 vs
+  /// Motorcycle 0.668 (0.07) and Vehicle 0.50 vs Helicopter 0.414 (0.086)
+  /// switch. The room baseline, Vehicle 0.738 vs Rail transport 0.332 (a
+  /// 0.41 gap), is nowhere near it.
+  static const double specificOverBroadMargin = 0.15;
+
   /// How many ranked predictions [ClassificationResult.topPredictions]
-  /// carries. Matches the existing Top-3 debug log.
+  /// carries. Matches the existing Top-3 debug log. [decideCategory]
+  /// considers exactly these candidates.
   static const int topPredictionCount = 3;
 
   /// Classification frequency - every 5 seconds (matches Firebase save frequency)
@@ -78,62 +138,209 @@ class SoundClassificationService {
   static String _classNameForIndex(int index) =>
       YAMNetClassMapping.indexToClassName[index] ?? 'YAMNet_Class_$index';
 
-  /// Decides which app category to report for a ranked pair of YAMNet
-  /// predictions. Pure and interpreter-free so it can be unit-tested.
+  /// Whether [className] is one of the [broadCatchAllClasses].
+  static bool isBroadCatchAll(String className) =>
+      broadCatchAllClasses.contains(className);
+
+  /// Decides which ranked YAMNet class the reported category comes from.
+  /// Pure and interpreter-free so it can be unit-tested with the score
+  /// vectors from the on-device logs. Only the first [topPredictionCount]
+  /// entries of [ranked] (highest score first) are considered.
   ///
-  /// Returns [YAMNetClassMapping.categoryUncertain] when either
-  /// - the winning score is below [confidenceThreshold] (ml-3/ml-4), or
-  /// - the winner and the runner-up map to DIFFERENT app categories and
-  ///   their scores are within [ambiguityMargin] of each other, so which
-  ///   one wins is effectively a coin flip.
+  /// 1. Below threshold: if the top-1 score is under [confidenceThreshold],
+  ///    the result is 'Uncertain' (ml-3/ml-4).
+  /// 2. Specific over broad: if the top-1 is a broad catch-all (see
+  ///    [broadCatchAllClasses]), take the strongest SPECIFIC class in the
+  ///    top-3. It replaces the broad class (its category, its own score)
+  ///    when it
+  ///    - maps to a DIFFERENT app category,
+  ///    - itself clears [confidenceThreshold], and
+  ///    - is within [specificOverBroadMargin] (absolute) of the broad
+  ///      class.
+  ///    If the strongest specific class shares the broad class's
+  ///    category (Vehicle over Car), that category is already right and
+  ///    nothing changes.
+  /// 3. Near-tie gate: if the reported class and its runner-up map to
+  ///    DIFFERENT categories and score within [ambiguityMargin] of each
+  ///    other, the result is 'Uncertain'. When the reported class is
+  ///    specific, the runner-up is the next SPECIFIC class. A broad
+  ///    catch-all never gates a specific winner, since rule 2 would let
+  ///    the specific class win even from 0.15 below it. When the reported
+  ///    class is broad (rule 2 did not fire), the runner-up is plain
+  ///    top-2, as before.
   ///
-  /// Otherwise returns the category the winning class maps to. Note that
+  /// Same-category near-ties are exempt from the gate. YAMNet's taxonomy
+  /// is hierarchical and multi-label, so pairs that land in one bucket
+  /// (Vehicle/Car, Music/Piano, Speech/'Male speech, man speaking')
+  /// routinely score close together, and gating them would discard
+  /// correct classifications. A parent and child in different categories
+  /// (Vehicle/Motorcycle) are not exempt; rule 2 handles them when the
+  /// parent is a broad catch-all.
+  ///
   /// [YAMNetClassMapping.getCategoryFromClassName] never itself returns
-  /// 'Uncertain', so an 'Uncertain' return always means a gate fired.
+  /// 'Uncertain', so an 'Uncertain' category always means a gate fired.
+  @visibleForTesting
+  static CategoryDecision decideCategory(
+    List<ClassificationCandidate> ranked,
+  ) {
+    if (ranked.isEmpty) {
+      throw ArgumentError.value(ranked, 'ranked', 'must not be empty');
+    }
+    final candidates = ranked.take(topPredictionCount).toList();
+    final top = candidates.first;
+
+    if (top.score < confidenceThreshold) {
+      return CategoryDecision(
+        category: YAMNetClassMapping.categoryUncertain,
+        chosen: top,
+        belowThreshold: true,
+      );
+    }
+
+    String categoryOf(ClassificationCandidate c) =>
+        YAMNetClassMapping.getCategoryFromClassName(c.className);
+
+    // Rule 2: the strongest specific class may replace a broad top-1.
+    // indexWhere finds the strongest specific class because the
+    // candidates are sorted by score.
+    final specificIndex =
+        candidates.indexWhere((c) => !isBroadCatchAll(c.className));
+    var chosenIndex = 0;
+    ClassificationCandidate? overruledBroad;
+    if (specificIndex > 0) {
+      final specific = candidates[specificIndex];
+      if (specific.score >= confidenceThreshold &&
+          top.score - specific.score <= specificOverBroadMargin &&
+          categoryOf(specific) != categoryOf(top)) {
+        chosenIndex = specificIndex;
+        overruledBroad = top;
+      }
+    }
+    final chosen = candidates[chosenIndex];
+    final chosenCategory = categoryOf(chosen);
+
+    // Rule 3: pick the runner-up for the near-tie gate.
+    ClassificationCandidate? runnerUp;
+    if (isBroadCatchAll(chosen.className)) {
+      // A broad top-1 that no specific class replaced: the original
+      // top-1/top-2 gate, unchanged.
+      if (candidates.length > 1) runnerUp = candidates[1];
+    } else {
+      for (var i = chosenIndex + 1; i < candidates.length; i++) {
+        if (!isBroadCatchAll(candidates[i].className)) {
+          runnerUp = candidates[i];
+          break;
+        }
+      }
+    }
+
+    final isAmbiguous = runnerUp != null &&
+        categoryOf(runnerUp) != chosenCategory &&
+        chosen.score - runnerUp.score < ambiguityMargin;
+
+    return CategoryDecision(
+      category:
+          isAmbiguous ? YAMNetClassMapping.categoryUncertain : chosenCategory,
+      chosen: chosen,
+      overruledBroad: overruledBroad,
+      runnerUp: runnerUp,
+      isAmbiguous: isAmbiguous,
+    );
+  }
+
+  /// Top-2 view of [decideCategory]. Returns only the category for a
+  /// ranked pair of predictions. Kept so the pairwise gate tests read
+  /// naturally.
   @visibleForTesting
   static String resolveCategory({
     required String bestClass,
     required double bestScore,
     required String secondClass,
     required double secondScore,
-  }) {
-    if (bestScore < confidenceThreshold) {
-      return YAMNetClassMapping.categoryUncertain;
+  }) =>
+      decideCategory([
+        ClassificationCandidate(
+            classIndex: -1, className: bestClass, score: bestScore),
+        ClassificationCandidate(
+            classIndex: -1, className: secondClass, score: secondScore),
+      ]).category;
+
+  /// Builds the [ClassificationResult] for one window from its ranked
+  /// top predictions (highest score first), and logs how it was decided.
+  /// Interpreter-free, so the full post-inference path, including what a
+  /// save would persist, can be unit-tested.
+  @visibleForTesting
+  static ClassificationResult resultFromRanked(
+    List<ClassificationCandidate> ranked,
+  ) {
+    final decision = decideCategory(ranked);
+    final chosen = decision.chosen;
+
+    // Below threshold: shown live as 'Uncertain', but meetsThreshold is
+    // false, so a save stores the reading without a class
+    // (ml-4/flow2-6, utils/classify_then_save.dart).
+    if (decision.belowThreshold) {
+      AppLogger.debug('Low confidence: ${chosen.scorePercent} for '
+          '${chosen.className} (threshold: '
+          '${(confidenceThreshold * 100).toStringAsFixed(0)}%) -> Uncertain');
+      return ClassificationResult(
+        category: YAMNetClassMapping.categoryUncertain,
+        soundType: YAMNetClassMapping.typeAmbient,
+        confidence: chosen.score,
+        yamnetClass: chosen.className,
+        yamnetClassIndex: chosen.classIndex,
+        topPredictions: ranked,
+      );
     }
 
-    final bestCategory =
-        YAMNetClassMapping.getCategoryFromClassName(bestClass);
-    final secondCategory =
-        YAMNetClassMapping.getCategoryFromClassName(secondClass);
-
-    // Same category => nothing about the outcome is ambiguous, so the
-    // winner is reported. This exemption is narrower than it may look:
-    // YAMNet's taxonomy is hierarchical and multi-label, but a parent and
-    // its child do NOT reliably share an app category. It only covers
-    // pairs that genuinely land in one bucket - Vehicle/Car (both
-    // Traffic), Music/Piano (both Music), Speech/'Male speech, man
-    // speaking' (both Speech). Gating those would discard correct
-    // classifications for no benefit.
-    //
-    // It does NOT cover Vehicle/Motorcycle: 'Vehicle' maps to Traffic
-    // (yamnet_class_mapping.dart) and 'Motorcycle' maps to Tuk-tuk, so
-    // that parent/child pair is gated like any other cross-category
-    // near-tie. Accepted behavioural consequence: a tuk-tuk or a
-    // motorcycle recorded near a road now often reports 'Uncertain'
-    // rather than 'Tuk-tuk', because those two classes routinely score
-    // within the margin of each other in that environment. That is the
-    // intended outcome - which of the two wins there is a coin flip
-    // (field test 12 §2.2) - but it does mean Tuk-tuk gets reported less
-    // often at the roadside than before this gate existed.
-    if (bestCategory == secondCategory) {
-      return bestCategory;
+    final overruled = decision.overruledBroad;
+    if (overruled != null) {
+      AppLogger.debug('Specific over broad: ${chosen.className} '
+          '(${chosen.scorePercent}) over ${overruled.className} '
+          '(${overruled.scorePercent}) -> '
+          '${YAMNetClassMapping.getCategoryFromClassName(chosen.className)}');
     }
 
-    if (bestScore - secondScore < ambiguityMargin) {
-      return YAMNetClassMapping.categoryUncertain;
+    // Near-tie between two DIFFERENT categories: the winner is arbitrary
+    // and flaps between consecutive windows, so report the same live-only
+    // 'Uncertain' pseudo-category the below-threshold path uses.
+    // isAmbiguous keeps meetsThreshold false, which is what stops a save
+    // persisting a class (ml-4/flow2-6).
+    final runnerUp = decision.runnerUp;
+    if (decision.isAmbiguous && runnerUp != null) {
+      AppLogger.info(
+          '❓ Near-tie -> Uncertain: ${chosen.className} '
+          '(${chosen.scorePercent}, '
+          '${YAMNetClassMapping.getCategoryFromClassName(chosen.className)})'
+          ' vs ${runnerUp.className} (${runnerUp.scorePercent}, '
+          '${YAMNetClassMapping.getCategoryFromClassName(runnerUp.className)})'
+          ' - gap ${((chosen.score - runnerUp.score) * 100).toStringAsFixed(1)}pp'
+          ' < ${(ambiguityMargin * 100).toStringAsFixed(0)}pp margin');
+      return ClassificationResult(
+        category: YAMNetClassMapping.categoryUncertain,
+        soundType: YAMNetClassMapping.typeAmbient,
+        confidence: chosen.score,
+        yamnetClass: chosen.className,
+        yamnetClassIndex: chosen.classIndex,
+        isAmbiguous: true,
+        nearTieWith: runnerUp,
+        topPredictions: ranked,
+      );
     }
 
-    return bestCategory;
+    final category = decision.category;
+    final soundType = YAMNetClassMapping.getSoundType(category);
+    AppLogger.info('✅ Classified: $category (${chosen.scorePercent}) - '
+        'YAMNet: ${chosen.className} (Class #${chosen.classIndex})');
+
+    return ClassificationResult(
+      category: category,
+      soundType: soundType,
+      confidence: chosen.score,
+      yamnetClass: chosen.className,
+      yamnetClassIndex: chosen.classIndex,
+      topPredictions: ranked,
+    );
   }
 
   /// Initialize the TFLite model
@@ -210,24 +417,17 @@ class SoundClassificationService {
       // Step 4: Run inference
       _interpreter!.run(input, output);
 
-      // Step 5: Rank the per-class scores once. The ranking feeds the
-      // top-1 result, the ambiguity margin gate, and the Top-3 debug log,
-      // so it is computed here instead of being re-derived three times.
+      // Step 5: Rank the per-class scores once. The top-3 feeds the
+      // decision (threshold, specific-over-broad, near-tie gate) and the
+      // Top-3 debug log, so it is computed here and not re-derived.
       final scores = output[0];
       final ranked = List<int>.generate(scores.length, (i) => i);
       ranked.sort((a, b) => scores[b].compareTo(scores[a]));
 
-      final maxIndex = ranked[0];
-      final confidence = scores[maxIndex];
-      final secondIndex = ranked.length > 1 ? ranked[1] : maxIndex;
-      final secondConfidence = scores[secondIndex];
-
-      final yamnetClassName = _classNameForIndex(maxIndex);
-      final secondClassName = _classNameForIndex(secondIndex);
-
-      // Ranked candidates, highest first. Display-only: they feed the
-      // Top-3 debug log below and the optional in-app Top-3 panel (pref
-      // 'show_classification_debug'). Never persisted to Firestore.
+      // Ranked candidates, highest first. They decide the category (Step
+      // 6), and also feed the Top-3 debug log below and the optional
+      // in-app Top-3 panel (pref 'show_classification_debug'). The list
+      // itself is never persisted to Firestore.
       final topPredictions = <ClassificationCandidate>[
         for (final index in ranked.take(topPredictionCount))
           ClassificationCandidate(
@@ -241,71 +441,12 @@ class SoundClassificationService {
       final rankedForLog = topPredictions.join(', ');
       AppLogger.debug('🎵 YAMNet Top 3: $rankedForLog');
 
-      // Step 6: Check confidence threshold (0.30, project spec).
-      // Below-threshold predictions come back as 'Uncertain' so the UI can
-      // show live feedback, but meetsThreshold is false and the dashboard
-      // save timer excludes them from Firestore (ml-4/flow2-6).
-      if (confidence < confidenceThreshold) {
-        AppLogger.debug('Low confidence: ${(confidence * 100).toStringAsFixed(1)}% for $yamnetClassName (threshold: ${(confidenceThreshold * 100).toStringAsFixed(0)}%) -> Uncertain');
-        return ClassificationResult(
-          category: YAMNetClassMapping.categoryUncertain,
-          soundType: YAMNetClassMapping.typeAmbient,
-          confidence: confidence,
-          yamnetClass: yamnetClassName,
-          yamnetClassIndex: maxIndex,
-          topPredictions: topPredictions,
-        );
-      }
-
-      // Step 7: Map YAMNet class to our category, applying the top-1/top-2
-      // ambiguity margin gate (field test 12 §4.1).
-      final bestCategory =
-          YAMNetClassMapping.getCategoryFromClassName(yamnetClassName);
-      final secondCategory =
-          YAMNetClassMapping.getCategoryFromClassName(secondClassName);
-      final category = resolveCategory(
-        bestClass: yamnetClassName,
-        bestScore: confidence,
-        secondClass: secondClassName,
-        secondScore: secondConfidence,
-      );
-
-      // Near-tie between two DIFFERENT categories: the winner is arbitrary
-      // and flaps between consecutive windows, so report the same live-only
-      // 'Uncertain' pseudo-category the below-threshold path uses.
-      // isAmbiguous keeps meetsThreshold false, which is what stops the
-      // dashboard save timer persisting a class (ml-4/flow2-6).
-      if (category == YAMNetClassMapping.categoryUncertain) {
-        AppLogger.info(
-            '❓ Near-tie -> Uncertain: $yamnetClassName '
-            '(${(confidence * 100).toStringAsFixed(1)}%, $bestCategory) vs '
-            '$secondClassName '
-            '(${(secondConfidence * 100).toStringAsFixed(1)}%, $secondCategory)'
-            ' - gap ${((confidence - secondConfidence) * 100).toStringAsFixed(1)}pp'
-            ' < ${(ambiguityMargin * 100).toStringAsFixed(0)}pp margin');
-        return ClassificationResult(
-          category: YAMNetClassMapping.categoryUncertain,
-          soundType: YAMNetClassMapping.typeAmbient,
-          confidence: confidence,
-          yamnetClass: yamnetClassName,
-          yamnetClassIndex: maxIndex,
-          isAmbiguous: true,
-          topPredictions: topPredictions,
-        );
-      }
-
-      final soundType = YAMNetClassMapping.getSoundType(category);
-      
-      AppLogger.info('✅ Classified: $category (${(confidence * 100).toStringAsFixed(1)}%) - YAMNet: $yamnetClassName (Class #$maxIndex)');
-
-      return ClassificationResult(
-        category: category,
-        soundType: soundType,
-        confidence: confidence,
-        yamnetClass: yamnetClassName,
-        yamnetClassIndex: maxIndex,
-        topPredictions: topPredictions,
-      );
+      // Step 6: Decide the category: 0.30 threshold, specific over broad,
+      // then the near-tie gate (field test 12 §4.1 and §7). Below-threshold
+      // and near-tie results come back as the live-only 'Uncertain' with
+      // meetsThreshold false, so a save stores the reading without a class
+      // (ml-4/flow2-6).
+      return resultFromRanked(topPredictions);
 
     } catch (e) {
       AppLogger.error('Error during classification', e);
@@ -435,6 +576,40 @@ class ClassificationCandidate {
   String toString() => '#$classIndex=$className ($scorePercent)';
 }
 
+/// What [SoundClassificationService.decideCategory] concluded for one
+/// window. Used to build and log a [ClassificationResult]; never persisted.
+class CategoryDecision {
+  /// App category to report. 'Uncertain' when a gate fired.
+  final String category;
+
+  /// The ranked class the reported category and confidence come from.
+  /// This is the top-1, unless the specific-over-broad rule replaced it.
+  final ClassificationCandidate chosen;
+
+  /// The broad catch-all that [chosen] replaced, or null when the
+  /// specific-over-broad rule did not fire.
+  final ClassificationCandidate? overruledBroad;
+
+  /// The class the near-tie gate compared [chosen] against, if any.
+  final ClassificationCandidate? runnerUp;
+
+  /// True when the top-1 score was below the confidence threshold.
+  final bool belowThreshold;
+
+  /// True when the near-tie gate fired: [chosen] and [runnerUp] map to
+  /// different categories and score within the ambiguity margin.
+  final bool isAmbiguous;
+
+  const CategoryDecision({
+    required this.category,
+    required this.chosen,
+    this.overruledBroad,
+    this.runnerUp,
+    this.belowThreshold = false,
+    this.isAmbiguous = false,
+  });
+}
+
 /// Result of sound classification
 class ClassificationResult {
   final String category;        // Custom category (Traffic, Construction, etc.)
@@ -443,12 +618,20 @@ class ClassificationResult {
   final String yamnetClass;     // Original YAMNet class name
   final int yamnetClassIndex;   // YAMNet class index
 
-  /// True when the top-1/top-2 scores were within
-  /// [SoundClassificationService.ambiguityMargin] of each other AND mapped
-  /// to different categories, so [category] is the live-only 'Uncertain'
-  /// pseudo-category rather than a real prediction. Keeps
-  /// [meetsThreshold] false so the result is never persisted with a class.
+  /// True when the reported class ([yamnetClass]) and its runner-up
+  /// ([nearTieWith]) scored within [SoundClassificationService.ambiguityMargin]
+  /// of each other AND mapped to different categories, so [category] is
+  /// the live-only 'Uncertain' pseudo-category rather than a real
+  /// prediction. Keeps [meetsThreshold] false so the result is never
+  /// persisted with a class.
   final bool isAmbiguous;
+
+  /// For an ambiguous result, the class [yamnetClass] was too close to.
+  /// This is usually the top-2, but not always: a broad catch-all never
+  /// counts as the runner-up of a specific class (see
+  /// [SoundClassificationService.decideCategory]). Display-only, and NOT
+  /// included in [toMap].
+  final ClassificationCandidate? nearTieWith;
 
   /// The top [SoundClassificationService.topPredictionCount] predictions
   /// for this window, highest score first.
@@ -465,6 +648,7 @@ class ClassificationResult {
     required this.yamnetClass,
     required this.yamnetClassIndex,
     this.isAmbiguous = false,
+    this.nearTieWith,
     this.topPredictions,
   });
 

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:noise_pollution_mapper/services/sound_classification_service.dart';
 import 'package:noise_pollution_mapper/services/yamnet_class_mapping.dart';
 
 // Verifies the bundled official YAMNet class map (finding ml-1).
@@ -98,6 +99,20 @@ void main() {
           equals('Quiet'));
       expect(YAMNetClassMapping.getCategoryFromClassName('Basketball bounce'),
           equals('Sports'));
+    });
+
+    test('every broad catch-all is an official, exactly-mapped class name',
+        () {
+      // decideCategory matches broad classes by exact name, so a typo
+      // would silently disable the specific-over-broad rule.
+      final official = YAMNetClassMapping.indexToClassName.values.toSet();
+      for (final name in SoundClassificationService.broadCatchAllClasses) {
+        expect(official.contains(name), isTrue, reason: name);
+        expect(YAMNetClassMapping.classMapping.containsKey(name), isTrue,
+            reason: name);
+      }
+      expect(YAMNetClassMapping.indexToClassName[294], equals('Vehicle'));
+      expect(YAMNetClassMapping.indexToClassName[282], equals('Water'));
     });
   });
 }

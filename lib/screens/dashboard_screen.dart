@@ -1432,10 +1432,18 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   /// Human-readable reason a near-tie was reported as 'Uncertain'.
   ///
-  /// Built from the ranked candidates the result already carries, so no
-  /// extra state is needed. Falls back to a generic sentence if the list
-  /// is missing (it is nullable and display-only).
+  /// Names the pair the gate actually compared: the reported class and
+  /// [ClassificationResult.nearTieWith]. That is not always the top-2,
+  /// because a broad catch-all never gates a specific class. Falls back
+  /// to the ranked top-2, then to a generic sentence, since both fields
+  /// are nullable and display-only.
   String _ambiguityReason(ClassificationResult result) {
+    final runnerUp = result.nearTieWith;
+    if (runnerUp != null) {
+      return 'Too close to call: ${result.yamnetClass} '
+          '${result.confidencePercent} '
+          'vs ${runnerUp.className} ${runnerUp.scorePercent}';
+    }
     final ranked = result.topPredictions;
     if (ranked == null || ranked.length < 2) {
       return 'Too close to call between the top two sounds';
