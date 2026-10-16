@@ -45,6 +45,39 @@ bool insertRestoredRecording(
   return true;
 }
 
+/// Space a floating SnackBar must leave at the bottom so it sits above the
+/// "Add Manual" extended FAB: the FAB's own margin, its height and a small gap.
+const double kHistoryFabSnackBarClearance =
+    kFloatingActionButtonMargin + 56.0 + 8.0;
+
+/// Shows the "Recording deleted / Undo" SnackBar without covering "Add Manual".
+///
+/// Device QA 2026-10-16: inside MainAppShell the SnackBar covered the FAB.
+/// ScaffoldMessenger shows a SnackBar only in the ROOT Scaffold, which is the
+/// shell's (it owns the bottom navigation bar). HistoryScreen's own Scaffold
+/// is nested inside it and owns the FAB, so it never learns about the SnackBar
+/// and cannot move the FAB up. Standalone (not in the shell) HistoryScreen's
+/// Scaffold is the root and already lifts its FAB above a SnackBar.
+///
+/// In the shell the SnackBar is therefore floating with a bottom margin that
+/// clears the FAB. Standalone it keeps the default behaviour.
+void showRecordingDeletedSnackBar(
+  BuildContext context, {
+  required bool inAppShell,
+  required VoidCallback onUndo,
+}) {
+  showActionSnackBar(
+    context,
+    content: const Text('Recording deleted'),
+    duration: const Duration(seconds: 4),
+    behavior: inAppShell ? SnackBarBehavior.floating : null,
+    margin: inAppShell
+        ? const EdgeInsets.fromLTRB(16, 0, 16, kHistoryFabSnackBarClearance)
+        : null,
+    action: SnackBarAction(label: 'Undo', onPressed: onUndo),
+  );
+}
+
 class HistoryScreen extends StatefulWidget {
   final bool isInAppShell;
 
@@ -838,14 +871,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
     // a1-3: replaces any earlier "Recording deleted" SnackBar instead of
     // queueing behind it, so the Undo on screen always restores THIS
     // deletion (docId, removedData and undoIndex are captured per call).
-    showActionSnackBar(
+    showRecordingDeletedSnackBar(
       context,
-      content: const Text('Recording deleted'),
-      duration: const Duration(seconds: 4),
-      action: SnackBarAction(
-        label: 'Undo',
-        onPressed: () => _undoDelete(docId, removedData, undoIndex),
-      ),
+      inAppShell: widget.isInAppShell,
+      onUndo: () => _undoDelete(docId, removedData, undoIndex),
     );
   }
 

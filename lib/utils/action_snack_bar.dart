@@ -30,6 +30,8 @@ const Duration assistiveMinimumDuration = Duration(seconds: 8);
 ///   is still showing one second after its timeout. The fallback is cancelled
 ///   as soon as the SnackBar closes, so it can never hide a newer one.
 ///
+/// [margin] is only valid together with [SnackBarBehavior.floating].
+///
 /// [messenger] may be passed when the caller captured it before an async
 /// gap; [context] is still used to read the accessibility setting.
 ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showActionSnackBar(
@@ -39,6 +41,7 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showActionSnackBar(
   Duration duration = const Duration(seconds: 4),
   Color? backgroundColor,
   SnackBarBehavior? behavior,
+  EdgeInsetsGeometry? margin,
   ScaffoldMessengerState? messenger,
 }) {
   final target = messenger ?? ScaffoldMessenger.of(context);
@@ -59,6 +62,7 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showActionSnackBar(
       persist: false,
       backgroundColor: backgroundColor,
       behavior: behavior,
+      margin: margin,
     ),
   );
 
