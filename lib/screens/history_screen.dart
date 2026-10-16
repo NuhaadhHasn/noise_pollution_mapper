@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -13,6 +13,36 @@ import '../utils/theme_helper.dart';
 import '../services/firebase_service.dart';
 import '../utils/app_logger.dart';
 import 'report_noise_screen.dart';
+
+/// Copies query results into a list whose runtime type is exactly
+/// `List<DocumentSnapshot>`.
+///
+/// `QuerySnapshot.docs` is a `List<QueryDocumentSnapshot>` at runtime.
+/// Storing it directly in a `List<DocumentSnapshot>` field compiles (Dart
+/// lists are covariant) but makes a later insert of a plain
+/// `DocumentSnapshot` - which is what `DocumentReference.get()` returns, and
+/// what Undo re-inserts - throw a TypeError at runtime (device QA
+/// 2026-10-16: "Could not restore recording." although the server restore
+/// had succeeded).
+@visibleForTesting
+List<DocumentSnapshot> recordingListFrom(Iterable<DocumentSnapshot> docs) =>
+    List<DocumentSnapshot>.of(docs);
+
+/// Re-inserts a restored recording at [index], clamped to the list bounds.
+///
+/// Skips the insert if the list already holds a document with the same id
+/// (for example after a pull-to-refresh reloaded it). Returns whether the
+/// document was inserted.
+@visibleForTesting
+bool insertRestoredRecording(
+  List<DocumentSnapshot> recordings,
+  DocumentSnapshot restored,
+  int index,
+) {
+  if (recordings.any((d) => d.id == restored.id)) return false;
+  recordings.insert(index.clamp(0, recordings.length), restored);
+  return true;
+}
 
 class HistoryScreen extends StatefulWidget {
   final bool isInAppShell;
@@ -100,7 +130,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
       if (mounted) {
         setState(() {
-          _recordings = snapshot.docs;
+          _recordings = recordingListFrom(snapshot.docs);
           _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
           _hasMore = snapshot.docs.length == _pageSize;
           _isOffline = false;
@@ -820,8 +850,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
           .get();
       if (!mounted || !restored.exists) return;
       setState(() {
-        _recordings.insert(index.clamp(0, _recordings.length), restored);
-        _totalCount++;
+        if (insertRestoredRecording(_recordings, restored, index)) {
+          _totalCount++;
+        }
       });
     } catch (e) {
       AppLogger.error('Failed to restore recording $docId', e);
