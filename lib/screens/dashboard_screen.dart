@@ -267,6 +267,17 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   ) async {
     try {
       await recorder.stopRecorder().timeout(_recorderCallTimeout);
+      // flutter_sound 9.30 logs and swallows an exception from the native
+      // stop and leaves the recorder in isRecording. Report that as a
+      // failed stop, so callers release this instance instead of reusing
+      // one that may still hold the microphone.
+      if (recorder.isRecording) {
+        AppLogger.warning(
+          '⚠️ stopRecorder() returned but the recorder is still recording, '
+          '$whenTimedOut',
+        );
+        return false;
+      }
       return true;
     } on TimeoutException {
       AppLogger.warning('⚠️ stopRecorder() timed out, $whenTimedOut');
@@ -607,6 +618,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
       // Location already fetched on screen start, no need to request again
 
+      // Read the recording prefs before any capture starts. Nothing after
+      // _startAudioCapture may throw, because the rollback below resets the
+      // UI to idle but does not stop a classifier recorder that is running.
+      final prefs = await SharedPreferences.getInstance();
+      if (!_isCurrentRecording(generation)) return;
+
       // Start the noise meter (dB readings), then the audio recorder for
       // sound classification.
       await _startAudioCapture(generation);
@@ -625,8 +642,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
       // Start periodic Firebase saves at the user's chosen interval
       // ('save_frequency' pref, 5-30 s, default 5 — settings-6).
-      final prefs = await SharedPreferences.getInstance();
-      if (!_isCurrentRecording(generation)) return;
       final saveFrequencySeconds =
           (prefs.getInt('save_frequency') ?? 5).clamp(5, 30).toInt();
       AppLogger.debug('Save frequency: ${saveFrequencySeconds}s');
@@ -969,15 +984,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       (NoiseReading reading) {
         if (!firstEvent.isCompleted) firstEvent.complete();
         if (!_isRecording || !mounted) return;
-        // dash-6: record stream liveness for the save timer's stall check.
-        // Device QA 2026-10-16: only a finite reading counts. A dead
-        // AudioRecord keeps delivering zero-filled buffers (-Infinity dB);
-        // counting those let the save timer re-save a frozen _currentDb
-        // and would hide the dead meter from the no-audio watchdog.
+        // Device QA 2026-10-16: only a finite reading proves the microphone
+        // is alive. A dead AudioRecord keeps delivering zero-filled buffers
+        // (-Infinity dB), which must not hide the dead meter from the
+        // no-audio watchdog.
         if (reading.meanDecibel.isFinite) {
-          final now = DateTime.now();
-          _lastNoiseReadingAt = now;
-          _audioWatchdog.audioReceived(AudioFeed.meter, now);
+          _audioWatchdog.audioReceived(AudioFeed.meter, DateTime.now());
         }
 
         // perf-2: no setState here. Values are published through
@@ -1003,6 +1015,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
         _currentDb = rawDb.clamp(0.0, 120.0); // Clamp to valid range
         _currentDbNotifier.value = _currentDb;
+        // dash-6: the save timer's stall check. Marked only when _currentDb
+        // was refreshed: a run of filtered (-Infinity or out-of-range)
+        // readings would otherwise let it re-save a frozen value as fresh.
+        _lastNoiseReadingAt = DateTime.now();
 
         // Add to history (only valid values)
         if (_currentDb.isFinite && _currentDb > 0) {

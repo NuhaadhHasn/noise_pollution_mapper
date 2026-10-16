@@ -619,8 +619,41 @@ Fixed in `0b0c302` (Dashboard; policy in `lib/utils/no_audio_watchdog.dart`):
   call. Open, start, stop and close are all bounded at 3 s. If the stuck
   native call never returns, that one session is only freed when the
   process ends, but the app no longer uses it.
-- **Stall guard.** Only finite meter readings count as liveness.
+- **Stall guard.** Only a reading that refreshes the displayed dB counts
+  as liveness for the save timer. -Infinity and out-of-range readings
+  are filtered, so they must not let it re-save a frozen value. The
+  watchdog counts any finite reading, because the mic is alive.
 - **Verify on the phone.** A normal recording still works. After Stop,
   `adb shell dumpsys audio` lists no active recording from the app. A
   second recording starts cleanly. The -38 race itself cannot be
   triggered on demand.
+
+#### Code review follow-ups
+
+An independent review of the fix found no Critical or High defects. Fixed
+on top of it:
+
+- **Medium.** flutter_sound 9.30 swallows an exception from the native stop
+  and leaves the recorder in isRecording. The bounded stop reported that
+  as success, so the instance was kept and could still hold the mic. It
+  now reports a failed stop, and every caller releases the instance.
+- **Low.** The recording prefs are read before capture starts, so nothing
+  after `_startAudioCapture` can throw into a rollback that leaves the
+  classifier recorder running.
+- **Low.** The stall guard's timestamp is set only when `_currentDb` is
+  refreshed (see Stall guard above).
+
+Open, low severity:
+
+- The watchdog and stall guard use wall-clock time. A network time
+  correction of 7 s or more during a recording could trigger a needless
+  restart (spending the one-restart budget), or delay detection. A
+  monotonic `Stopwatch` clock would fix it.
+- If the classifier feed dies mid-recording, saves classify the last
+  buffered window again until the watchdog fires (about 7-8 s). Skipping
+  classification when the newest chunk is older than about 1.5 s would
+  close that gap.
+- The Dashboard's capture wiring has no automated test (its widget test is
+  quarantined, arch-2). Moving capture into a controller with injectable
+  recorder and meter fakes would make the Stop-during-start, stop-timeout
+  and dispose-mid-restart paths testable.
