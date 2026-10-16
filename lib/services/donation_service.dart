@@ -60,6 +60,25 @@ class DonationService {
     return v is bool ? v : true;
   }
 
+  /// Whether the donation screen offers PayPal at all.
+  ///
+  /// OFF unless `app_config/donations` opts in explicitly: `paypalEnabled`
+  /// must be the bool `true` (a missing field, `false`, or a wrong type
+  /// such as the string 'true' all mean off), AND [clientId] must be a
+  /// real business email or merchant ID, not empty or the placeholder.
+  ///
+  /// This is a remote switch, so PayPal can be turned on or off without a
+  /// release. It exists because PayPal currently answers "This
+  /// organization is currently ineligible to receive donations" for the
+  /// configured account, a restriction on the account side. The owner
+  /// re-enables it by adding `paypalEnabled: true` in the Firebase console
+  /// once the account can receive money. app_config is client-read-only.
+  static bool get isPayPalEnabled {
+    if (_remoteConfig?['paypalEnabled'] != true) return false;
+    final email = clientId.trim();
+    return email.isNotEmpty && !email.contains('your_paypal');
+  }
+
   // Buy Me a Coffee URL
   static String get buyMeACoffeeUrl {
     final v = _remoteConfig?['buyMeACoffeeUrl'];

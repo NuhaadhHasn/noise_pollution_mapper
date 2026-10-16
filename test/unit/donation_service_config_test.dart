@@ -38,4 +38,69 @@ void main() {
     expect(DonationService.isSandboxMode, true);
     expect(DonationService.buyMeACoffeeUrl, '');
   });
+
+  // PayPal remote switch: the configured account is currently "ineligible
+  // to receive donations", so PayPal is offered only when app_config
+  // opts in with paypalEnabled == true.
+  group('isPayPalEnabled', () {
+    const email = 'donations@example.com';
+
+    test('is off when no config is loaded', () {
+      expect(DonationService.isPayPalEnabled, isFalse);
+    });
+
+    test('is off when paypalEnabled is absent (production config today)', () {
+      DonationService.applyRemoteConfig({
+        'paypalBusinessEmail': email,
+        'paypalSandboxMode': false,
+        'buyMeACoffeeUrl': 'https://www.buymeacoffee.com/example',
+      });
+      expect(DonationService.isPayPalEnabled, isFalse);
+      // The email itself still loads: only the switch is missing.
+      expect(DonationService.clientId, email);
+    });
+
+    test('is off when paypalEnabled is false', () {
+      DonationService.applyRemoteConfig({
+        'paypalEnabled': false,
+        'paypalBusinessEmail': email,
+      });
+      expect(DonationService.isPayPalEnabled, isFalse);
+    });
+
+    test('is off when enabled without a usable business email', () {
+      for (final config in <Map<String, dynamic>>[
+        {'paypalEnabled': true},
+        {'paypalEnabled': true, 'paypalBusinessEmail': ''},
+        {'paypalEnabled': true, 'paypalBusinessEmail': '   '},
+        {'paypalEnabled': true, 'paypalBusinessEmail': 42},
+        {
+          'paypalEnabled': true,
+          'paypalBusinessEmail': 'your_paypal_sandbox_client_id',
+        },
+      ]) {
+        DonationService.applyRemoteConfig(config);
+        expect(DonationService.isPayPalEnabled, isFalse,
+            reason: config.toString());
+      }
+    });
+
+    test('requires the bool true, not a truthy look-alike', () {
+      for (final flag in <Object>['true', 1, 'yes']) {
+        DonationService.applyRemoteConfig({
+          'paypalEnabled': flag,
+          'paypalBusinessEmail': email,
+        });
+        expect(DonationService.isPayPalEnabled, isFalse, reason: '$flag');
+      }
+    });
+
+    test('is on when enabled with a business email', () {
+      DonationService.applyRemoteConfig({
+        'paypalEnabled': true,
+        'paypalBusinessEmail': email,
+      });
+      expect(DonationService.isPayPalEnabled, isTrue);
+    });
+  });
 }

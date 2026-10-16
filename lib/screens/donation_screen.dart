@@ -6,7 +6,9 @@ import '../utils/theme_helper.dart';
 import '../widgets/buy_me_coffee_widget.dart';
 import '../widgets/paypal_webview_widget.dart';
 
-/// Donation screen with PayPal and Buy Me a Coffee options
+/// Donation screen. Buy Me a Coffee is always offered. PayPal is offered
+/// only when the remote config enables it ([DonationService.isPayPalEnabled]);
+/// otherwise its whole section is absent, not shown broken.
 class DonationScreen extends StatefulWidget {
   const DonationScreen({super.key});
 
@@ -24,6 +26,12 @@ class _DonationScreenState extends State<DonationScreen> {
   void initState() {
     super.initState();
     _selectedAmount = DonationService.presetAmounts.first.toString();
+    // Whether PayPal is offered comes from app_config/donations, so load
+    // it now rather than on the first tap. Until it arrives, and if it
+    // never does, PayPal stays hidden and Buy Me a Coffee is shown.
+    DonationService.ensureConfigLoaded().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -43,7 +51,8 @@ class _DonationScreenState extends State<DonationScreen> {
     await DonationService.ensureConfigLoaded();
     if (!mounted) return;
 
-    // Check if PayPal donation is configured
+    // Check if PayPal donation is configured. The button only exists when
+    // isPayPalEnabled, which already requires this; kept as a safety net.
     if (DonationService.clientId.isEmpty ||
         DonationService.clientId.contains('your_paypal')) {
       DonationService.showErrorSnackBar(
@@ -98,7 +107,8 @@ class _DonationScreenState extends State<DonationScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = ThemeHelper.getPrimaryColor(context);
-    
+    final payPalEnabled = DonationService.isPayPalEnabled;
+
     return Scaffold(
       backgroundColor: isDark ? AppTheme.darkPurple : Colors.grey.shade50,
       appBar: AppBar(
@@ -112,22 +122,37 @@ class _DonationScreenState extends State<DonationScreen> {
           children: [
             // Header Card
             _buildHeaderCard(isDark, primaryColor),
-            
+
             const SizedBox(height: 16),
-            
-            // Donation Options
-            _buildDonationOptionsCard(isDark, primaryColor),
-            
-            const SizedBox(height: 16),
-            
-            // Impact Tracker
-            _buildImpactTrackerCard(isDark, primaryColor),
-            
-            const SizedBox(height: 24),
-            
-            // Alternative donation method
-            _buildAlternativeDonationCard(isDark, primaryColor),
-            
+
+            if (payPalEnabled) ...[
+              // PayPal: amounts, "Donate with PayPal" and its note
+              _buildDonationOptionsCard(isDark, primaryColor),
+
+              const SizedBox(height: 16),
+
+              // Impact Tracker
+              _buildImpactTrackerCard(isDark, primaryColor),
+
+              const SizedBox(height: 24),
+
+              // Alternative donation method
+              _buildAlternativeDonationCard(isDark, primaryColor),
+            ] else ...[
+              // PayPal is off: Buy Me a Coffee is the one way to donate,
+              // so it leads, directly under the header.
+              _buildAlternativeDonationCard(
+                isDark,
+                primaryColor,
+                isOnlyOption: true,
+              ),
+
+              const SizedBox(height: 16),
+
+              // Impact Tracker
+              _buildImpactTrackerCard(isDark, primaryColor),
+            ],
+
             const SizedBox(height: 32),
           ],
         ),
@@ -501,7 +526,13 @@ class _DonationScreenState extends State<DonationScreen> {
     );
   }
 
-  Widget _buildAlternativeDonationCard(bool isDark, Color primaryColor) {
+  /// The Buy Me a Coffee card. When PayPal is off it is the only option
+  /// ([isOnlyOption]), so it must not call itself the "alternative".
+  Widget _buildAlternativeDonationCard(
+    bool isDark,
+    Color primaryColor, {
+    bool isOnlyOption = false,
+  }) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(16),
@@ -544,7 +575,9 @@ class _DonationScreenState extends State<DonationScreen> {
                       ),
                     ),
                     Text(
-                      'Alternative donation method',
+                      isOnlyOption
+                          ? 'Support development with a one-off contribution'
+                          : 'Alternative donation method',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Colors.grey.shade600,
                       ),
